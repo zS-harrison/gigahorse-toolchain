@@ -572,3 +572,11 @@ the importer does not authenticate a vendor signature or generate a parity score
   --baselines /mnt/model-ssd/scratch/gigahorse-decompiler/dedaub-exports \
   --output artifacts/my-comparison
 ```
+
+
+## Local calibration references
+
+The Morpho liquidator runtime and locally generated analysis fixtures are
+distributed as `fixtures/dedaub/morpho-liquidator.*`. Third-party decompiled
+outputs are kept only in ignored `dedaub-exports/`, outside the repository.
+
