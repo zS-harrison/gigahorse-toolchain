@@ -631,6 +631,17 @@ numbers are no longer held-out measurements:
 | uniswap-v2-router02 | 0 | 1,658 | 1 | 0 | 8/24 |
 | chainlink-eth-usd-proxy | 0 | 488 | 10 | 0 | 8/23 |
 
+**Re-rendered again after the ABI coder recognition**
+(`results/run1-rerendered-abi.json`, code 6032b68, same saved relations): only
+Router02 changes, 1,658 -> 1,330 code lines. All 44 `pairFor` hashes print as
+`keccak256(abi.encodePacked(hex"ff", address(0x5c69…), keccak256-of-the-sorted-pair,
+0x96e8…))`, and its `TransferHelper` buffers fold into their calls. Wrong
+claims stay 0 on all five; UNCERTAIN, unstructured functions and unresolved
+returns are unchanged. Router02's relations are now also a calibration
+fixture (`fixtures/calibration/`), so its view is executed in tests (65 cases,
+101 external calls against Py-EVM with stub pairs at the computed CREATE2
+addresses).
+
 DAI's two extra UNCERTAIN lines mark the reconciled arity of `rely`/`deny`. The
 unresolved returns are mostly dynamic values (`string`, arrays) whose ABI
 encoding is not recognized, and these are printed without a return type. The
