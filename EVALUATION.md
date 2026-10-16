@@ -620,15 +620,15 @@ remaining cETH functions in three ways:
 - the dispatcher's jumps into the fallback.
 
 **Re-rendered from run 1's saved relations** (`results/run1-rerendered.json`,
-code d51fda1; no new native run). Because run 1 informed these fixes, these
+code a5783e8; no new native run). Because run 1 informed these fixes, these
 numbers are no longer held-out measurements:
 
 | Contract | Wrong claims | Code lines | UNCERTAIN | Unstructured fns | Returns unresolved |
 | --- | --- | --- | --- | --- | --- |
-| tether-usdt | 0 | 402 | 1 | 0 | 0/32 |
-| dai | 0 | 311 | 3 | 0 | 6/22 |
-| compound-ceth | 0 | 2,109 | 1 | 0 | 0/45 |
-| uniswap-v2-router02 | 0 | 1,905 | 1 | 0 | 8/24 |
+| tether-usdt | 0 | 399 | 1 | 0 | 0/32 |
+| dai | 0 | 296 | 3 | 0 | 6/22 |
+| compound-ceth | 0 | 1,971 | 1 | 0 | 0/45 |
+| uniswap-v2-router02 | 0 | 1,848 | 1 | 0 | 8/24 |
 | chainlink-eth-usd-proxy | 0 | 488 | 10 | 0 | 8/23 |
 
 DAI's two extra UNCERTAIN lines mark the reconciled arity of `rely`/`deny`. The
