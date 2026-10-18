@@ -1,7 +1,7 @@
 {
   "selection_id": "heldout-2026-10-16",
   "run": "run1",
-  "code_commit": "0459594acb2f5b5a7558e964986105db6ebfba3d",
+  "code_commit": "fe8359eda5c9df0ca45c557ade475771e3968a09",
   "status": "partial: the batch was stopped under system memory pressure after 5 of 12 contracts (Uniswap V3 pool was mid-analysis); timings were lost",
   "contracts": [
     {

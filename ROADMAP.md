@@ -57,7 +57,7 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | Readable code | `abi.decode(x, (S0))` of calldata bytes into a struct (fields `v0.f5`), `abi.encode(S0(...))`, `keccak256(abi.encodePacked(...))`, ABI calls staged at the free pointer (`flashLoan(a, b, v31)`, `call(abi.encodeWithSelector(...))`, `call(b)`, `""`); 24 fixtures 4,890 -> 4,770 code lines, none longer; Morpho 241 -> 139 (Dedaub 192); Router02 1,658 -> 1,330 (all 44 `pairFor` hashes) | Returned words decoded from memory (struct returns), returndata `bool` decoding (`TransferHelper`), via-IR encoder layouts, dynamic arrays/nested structs in coders |
 | Evidence | Each coder line keeps the replaced statements as its evidence (Morpho's `abi.decode` line: 195 IR statements); 25 fixtures fully accounted | — |
 | Behavioral confidence | The interpreter executes the coders with solc's checks in order, allocations and memory writes; constant pointers folded by the analysis are checked. Morpho: 171 cases incl. one malformed callback per decoder check; Router02 (new calibration fixture): 65 cases, 101 calls, every `pairFor` target compared with Py-EVM. Cross-check unchanged: 1,079 agreeing, 0 unsupported. Found and fixed: private mask-typed parameters were not cast when executed | Bounded inputs; coders are matched only in the forms seen so far |
-| Held-out accuracy | Re-render of the five analyzed contracts at 6032b68: 0 wrong claims | Seven contracts still unanalyzed |
+| Held-out accuracy | Re-render of the five analyzed contracts at 9dc20c0: 0 wrong claims | Seven contracts still unanalyzed |
 
 ### Status update 2026-10-16 (evening): held-out run 2 and the first Dedaub comparison
 
@@ -71,7 +71,7 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 
 | Requirement | New evidence | Still open |
 | --- | --- | --- |
-| Held-out accuracy | Run 3 (8 contracts frozen in 354be8c, first scores in fb0870a before tuning): 8/8 produced output, 141 names correct, 0 wrong, 23 wrong claims. After fixing collision names, flattened struct parameters and uint160-as-address (adcf6e5): run 1 0 -> 0, run 2 17 -> 1, run 3 23 -> 10, no new wrong claims | Structs decoded by helper functions (no arguments recovered), return widths of packed fields, via-IR validators for typing, Curve/Vyper dispatch (0/39 selectors) |
+| Held-out accuracy | Run 3 (8 contracts frozen in ee83d92, first scores in 37d2617 before tuning): 8/8 produced output, 141 names correct, 0 wrong, 23 wrong claims. After fixing collision names, flattened struct parameters and uint160-as-address (4be067f): run 1 0 -> 0, run 2 17 -> 1, run 3 23 -> 10, no new wrong claims | Structs decoded by helper functions (no arguments recovered), return widths of packed fields, via-IR validators for typing, Curve/Vyper dispatch (0/39 selectors) |
 | Useful function interfaces | Static struct parameters from the decoder's own checks (`S<n> varg<i>`, fields `.f<j>`); argument counts capped at the decoder's head; dictionary names rejected when the decoder needs more bytes; `uint160` from signatures or numeric use | Nested struct types, dynamic tuples |
 
 ### Status update 2026-10-16 (night): memory objects and custom errors

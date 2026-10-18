@@ -1,7 +1,7 @@
 {
  "selection_id": "heldout-2026-10-16",
  "run": "run1-rerendered",
- "code_commit": "ddda645",
+ "code_commit": "a87456d",
  "status": "re-rendered from run1's saved native relations (no new Gigahorse run) after fixes that run1 informed (arity, payability, argument labels, shared-region splitting, dispatcher tail jumps) and later readability passes; these five are therefore no longer held-out measurements. The seven remaining contracts have not been analyzed.",
  "contracts": [
   {

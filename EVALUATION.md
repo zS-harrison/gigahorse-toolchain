@@ -612,7 +612,7 @@ The five wrong claims had two causes:
 - **cETH.** Payability was claimed for functions whose bodies were
   unstructured.
 
-Both are fixed (9f0711e). Two later commits (b069b42, d51fda1) structure the
+Both are fixed (33b9770). Two later commits (762d740, 4db6753) structure the
 remaining cETH functions in three ways:
 
 - jumps whose targets the native analysis already resolved;
@@ -620,7 +620,7 @@ remaining cETH functions in three ways:
 - the dispatcher's jumps into the fallback.
 
 **Re-rendered from run 1's saved relations** (`results/run1-rerendered.json`,
-code ddda645; no new native run). Because run 1 informed these fixes, these
+code a87456d; no new native run). Because run 1 informed these fixes, these
 numbers are no longer held-out measurements:
 
 | Contract | Wrong claims | Code lines | UNCERTAIN | Unstructured fns | Returns unresolved |
@@ -632,7 +632,7 @@ numbers are no longer held-out measurements:
 | chainlink-eth-usd-proxy | 0 | 488 | 10 | 0 | 8/23 |
 
 **Re-rendered again after the ABI coder recognition**
-(`results/run1-rerendered-abi.json`, code 6032b68, same saved relations): only
+(`results/run1-rerendered-abi.json`, code 9dc20c0, same saved relations): only
 Router02 changes, 1,658 -> 1,330 code lines. All 44 `pairFor` hashes print as
 `keccak256(abi.encodePacked(hex"ff", address(0x5c69…), keccak256-of-the-sorted-pair,
 0x96e8…))`, and its `TransferHelper` buffers fold into their calls. Wrong
@@ -660,7 +660,7 @@ Router02 reads close to its source after these changes:
 The remaining seven contracts are analyzed in run 2 below.
 
 **Re-rendered after the size limits and the robustness fixes below**
-(`results/run1-rerendered-limits.json`, code 7000f4a, same saved relations):
+(`results/run1-rerendered-limits.json`, code 1ba1c77, same saved relations):
 0 wrong claims on all five; code lines unchanged (399, 296, 1,894, 1,330, 488).
 
 
@@ -675,7 +675,7 @@ contracts is calibration, not a held-out result.
 **One change came from these contracts before scoring.** Run 1 was killed
 while analyzing the Uniswap V3 pool. Its leftover working directory showed that
 Gigahorse had finished in 8 s; the readable view then grew past 6 GB. The fix
-(f7fb360) was made on that saved run-1 analysis only:
+(adab468) was made on that saved run-1 analysis only:
 
 - The lifter inlined every pure value into each use, so chained reuse
   (Newton steps, `x * x + x`) doubled the printed tree per step. A value whose
@@ -686,7 +686,7 @@ Gigahorse had finished in 8 s; the readable view then grew past 6 GB. The fix
   (hashing and `repr` were exponential). A form over 256 nodes becomes a fresh
   atom that equals nothing, so a recognizer can only miss, never match wrongly.
 
-**How the contracts ran** (code b5a9a9d, `results/run2.json`): natively, one at
+**How the contracts ran** (code 29a2499, `results/run2.json`): natively, one at
 a time, smallest first, each in a systemd scope capped at 16 GB with swap off,
 a 1-hour wall-clock limit and Gigahorse's 300 s analysis timeout. At least
 20 GB of free memory was checked before each start. Peak memory is that of the
@@ -738,7 +738,7 @@ What went wrong:
 Totals over the five contracts with output: 112/113 selectors, 99 names
 correct, 10 unnamed, 3 wrong; 12 wrong claims, all in the V3 pool and Seaport.
 
-**After two robustness fixes** (cb22824, made after the first scores and
+**After two robustness fixes** (9735fdf, made after the first scores and
 informed by the two failures; `results/run2-after-fixes.json`, re-rendered from
 saved relations, no new native run for the scored five):
 
@@ -765,7 +765,7 @@ unstructured functions.
 
 The user's exports of Dedaub's standard decompiler output for the seven
 contracts (`dedaub-exports/`) were opened only after the
-first scores above were committed (96ef441). `scripts/compare-dedaub.py`
+first scores above were committed (0385bee). `scripts/compare-dedaub.py`
 (`results/run2-dedaub-comparison.json`) scores both texts with the same
 held-out scorer against the verified ABIs. Dedaub's signatures come from its
 dispatcher and its argument types and payability from its function headers.
@@ -845,13 +845,13 @@ parameter names; static-struct arguments (arity) and `uint160` against
 
 The seven run-2 contracts became calibration once their Dedaub exports were
 read, so the work below was tuned on them. To keep a later measurement honest,
-a new held-out set was frozen first (354be8c, `fixtures/evaluation-heldout-2/`):
+a new held-out set was frozen first (ee83d92, `fixtures/evaluation-heldout-2/`):
 WBTC (solc 0.4.24), wstETH (0.6.12), the Uniswap V3 position manager (0.7.6),
 the Balancer V2 vault (0.7.1), the ENS public resolver (0.8.17), Permit2
 (0.8.17, via-IR), the Uniswap V4 pool manager (0.8.26, via-IR) and the Curve
 stETH pool (Vyper 0.2.8). None of them has been analyzed yet.
 
-**What changed** (0a47f5e, cd75c30, 7fffd2d):
+**What changed** (b07721b, 0e67ed4, 3a10a91):
 
 - **Custom errors and Panic codes built in memory** become one revert:
   `revert InvalidMsgValue();`, `require(c, InsufficientValue())`,
@@ -952,8 +952,8 @@ user's Dedaub exports for those eight contracts.
 
 ## Held-out run 3: `heldout-2-2026-10-16` (first scores)
 
-The eight contracts frozen in 354be8c (`fixtures/evaluation-heldout-2/`), each
-analyzed once natively at 364c079, before any change made for them:
+The eight contracts frozen in ee83d92 (`fixtures/evaluation-heldout-2/`), each
+analyzed once natively at c877dfe, before any change made for them:
 
 - **How they ran:** one at a time, smallest first, each in a systemd scope
   capped at 24 GB with swap off, a 1-hour wall-clock limit and Gigahorse's
@@ -991,7 +991,7 @@ The 23 wrong claims by cause:
 - **2 return widths:** values returned as `uint128` or `uint112` where the ABI
   declares `uint256` (or `address`).
 
-**After fixing three wrong-claim causes** (adcf6e5, made after the first
+**After fixing three wrong-claim causes** (4be067f, made after the first
 scores above; re-rendered from saved relations, no new native runs):
 
 - **Dictionary names the decoder contradicts.** solc never requires more
@@ -1303,9 +1303,9 @@ Tests:
 
 ## Held-out run 4: `heldout-3-2026-10-16` (first scores)
 
-Set 3 was frozen in ce7ee54, before the work on helper-decoded structs, Vyper
+Set 3 was frozen in 306ca08, before the work on helper-decoded structs, Vyper
 dispatch and structuring, and was not analyzed until that work was committed
-(639bcc9). Each contract then ran once natively (24 GB cap, 300 s native
+(168cf10). Each contract then ran once natively (24 GB cap, 300 s native
 timeout, one at a time, smallest first); these are the first scores, before
 any tuning (`results/run4.json`). No Dedaub export was opened.
 
@@ -1665,7 +1665,7 @@ so it was narrowed. Typing via-IR addresses needs evidence of address use.
 
 The seven run-2 contracts against the same Dedaub exports as in "Held-out
 run 2: same-bytecode comparison with Dedaub", with the local outputs at
-0f922e7 (`scripts/compare-dedaub.py`,
+4776d3a (`scripts/compare-dedaub.py`,
 `results/run2-dedaub-comparison-2026-10-17.json`). These exports have been
 open since that comparison, so this is calibration, not a held-out result.
 

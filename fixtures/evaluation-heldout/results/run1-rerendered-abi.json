@@ -1,7 +1,7 @@
 {
   "selection_id": "heldout-2026-10-16",
   "run": "run1-rerendered-abi-coders",
-  "code_commit": "6032b68",
+  "code_commit": "9dc20c0",
   "status": "re-rendered from run1's saved native relations (no new Gigahorse run) after the ABI coder recognition (abi.decode/abi.encode, keccak256(abi.encodePacked), staged calls). These five are calibration cases, not held-out measurements. The seven remaining contracts have still not been analyzed.",
   "contracts": [
     {
