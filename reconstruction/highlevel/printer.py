@@ -11,6 +11,7 @@ from .ir import (
     Assign,
     Binary,
     Call,
+    CalldataArg,
     Comment,
     Const,
     CustomError,
@@ -154,7 +155,7 @@ def _expr(expr: Expr, context: int) -> str:
         return f"{expr.name}({', '.join(_expr(arg, 0) for arg in expr.args)})"
     if isinstance(expr, AbiCodec):
         return _codec(expr)
-    if isinstance(expr, MemoryBytes):
+    if isinstance(expr, (MemoryBytes, CalldataArg)):
         return _expr(expr.pointer, context)
     if isinstance(expr, Field):
         if expr.label.startswith("["):

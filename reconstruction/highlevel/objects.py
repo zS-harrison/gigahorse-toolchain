@@ -66,7 +66,7 @@ from .ir import (
     annotate,
     is_local,
 )
-from .passes import FunctionState, has_effect, iter_statements, statement_ids
+from .passes import FunctionState, has_effect, iter_statements, statement_ids, substitute
 from .types import map_expr
 
 INITIAL_POINTER = 0x80  # solc's free pointer before any allocation
@@ -201,6 +201,15 @@ def _match(
     update = _pointer_update(update_stmt)
     if update is None:
         return None
+    # The quiet statements move after the allocation: its end cannot read the
+    # locals they assign (e.g. a common subexpression shared with the size check).
+    definitions = {
+        stmt.targets[0].name: stmt.value
+        for stmt in kept
+        if isinstance(stmt, Assign) and len(stmt.targets) == 1 and is_local(stmt.targets[0])
+    }
+    if any(_mentions(update, name) for name in definitions):
+        update = substitute(update, definitions)
     end = t.canon(update)
     t.observe(update_stmt)
     consumed = [update_stmt]

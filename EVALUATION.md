@@ -1730,3 +1730,74 @@ stays raw, with its check.
   `varg0.balanceOf(varg1)`); a `uint160` used in arithmetic in
   `parameter-via-ir` keeps its check. 481 passed, 17 skipped; cross-check 1,079
   agreeing.
+
+## Dynamic ABI encodings from calldata (ENS raw memory)
+
+ENS's registrar controller was 34% raw memory against Dedaub's 18% (previous
+comparison). Most of it was solc's legacy ABI encoder writing dynamic values
+statement by statement. These sequences are now recognized in
+`reconstruction/highlevel/abi_codec.py`, each checked step by step against
+what solc emits, and executed by the interpreter as compiled (same memory
+writes at the free pointer, same checks, same order):
+
+- A calldata `string`/`bytes` or `bytes[]` argument passed on whole to an
+  external call (named or low-level `abi.encodeWithSelector`), an event, or
+  `keccak256(abi.encode(...))`: printed as the argument
+  (`0xa4014982(varg0, varg1, varg2, varg4, varg7)`, `emit NameRenewed(v2, varg0, ...)`,
+  `keccak256(abi.encode(label, owner, ..., varg5, ...))`). A `bytes[]`
+  element's offset and length are checked during the encoding, as compiled
+  (a failed check reverts without data).
+- `keccak256(bytes(name))` for a calldata string:
+  `keccak256(abi.encodePacked(varg0))`.
+- `string.concat(name, ".eth")` and other packed encodings with a `bytes`
+  element: `abi.encodePacked(varg2, hex"2e657468")`.
+- Before Cancun, solc copies memory with a word loop and a zero word; that
+  loop becomes `MCOPY` when its destination is new memory (relative to a
+  free-pointer read) and its source is not (rule copy-loop,
+  assumes-solc-memory-discipline). Staged calls then recognize a `bytes
+  memory` argument as before.
+- A call whose returned words are decoded is followed by
+  `q = MEM[64]; r = returndata.length; MEM[64] = q + round(r)`; the call
+  takes these (rule returned-data-allocated) and `r` reads as
+  `returndata.length`.
+- For a callee without a dictionary signature, the native model gives a
+  dynamic argument as a pointer to its encoding, which the view printed as if
+  it were the value (`0xa4014982(v22 + 164, ...)`, with an UNCERTAIN note).
+  Recognized encodings now print the value itself.
+
+Results (ENS from the saved run-2 relations; all held-out contracts re-rendered
+with `--reuse`):
+
+- **ENS: 581 -> 417 code lines, raw share 34.9% -> 14.6%** (203 -> 61 raw
+  lines), against Dedaub's 512 lines and 18.4%. `register` went from 147 lines
+  to 74, its commitment hash, NameWrapper call (`0xa4014982`), resolver
+  multicall and `NameRegistered` event each one line. What stays raw: the
+  `bytes[]` decoded from the multicall's return data, the `Price` struct
+  returned by a private function (`MEM[v1]`, `MEM[v1 + 32]`), the custom
+  error built in memory with a `string` argument, and argument offset checks
+  (`msg.data[4] <= uint64.max`).
+- Held-out runs 1-4 (28 contracts): every score count unchanged, wrong claims
+  4 -> 4, code lines 61,439 -> 61,020, uncertain lines 1,446 -> 1,430,
+  unaccounted IR statements unchanged; ENS public resolver 1,574 -> 1,489
+  lines, the V3 pool, SwapRouter02, CoW and the EVC slightly shorter
+  (`results/runs1-2-encoders.json`, `results/run3-encoders.json`,
+  `results/run4-encoders.json`).
+- Dedaub comparison on the seven run-2 contracts (calibration,
+  `results/run2-dedaub-comparison-encoders.json`): 17,651 / 12,671 code
+  lines, raw share 27.9% / 25.7% (was 17,872 lines, 28.6%). The raw share left
+  is mostly Curve 3pool (40%), Seaport (47%) and 1inch (18%).
+
+New fixture `EncoderFixture` (registry-style code compiled for Paris, legacy
+code generator only): its calls, events and hashes print as above, and 99
+calls run against Py-EVM, including malformed `bytes[]` elements (an offset
+past the data, a negative offset, a length above 2**64 - 1, a length past the
+end). The via-IR build of the same source has unresolved PHIs and an argument
+read from an unassigned local, the same before and after this change, so it
+is not a fixture yet. Also fixed: a memory object whose end the
+common-subexpression pass had moved into a later local (`t0`) read that local
+before it was assigned, which the fixture's first execution of such a
+function exposed. 485 passed, 17 skipped; cross-check 1,079 agreeing.
+
+Not recognized yet: a `string memory` argument at the folded pointer 0x80
+(the copy's source is the constant 160, as in the fixture's `priceOf`), more
+than one dynamic value in one encoding, and decoding returned `bytes[]`.

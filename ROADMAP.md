@@ -158,6 +158,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Useful function interfaces | via-IR 160-bit checked arguments typed `address` from an address use (call target, sender comparison, balance/code, a matched callee signature's address parameter): argument types 883 -> 905 correct, no new wrong claims | Address evidence from storage writes and events (most of MetaMorpho's); names of 1inch/Seaport functions (dictionary coverage) |
 
+### Status update 2026-10-17: dynamic ABI encodings from calldata
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | solc's encoders of calldata `string`/`bytes[]` arguments (calls, events, `keccak256(abi.encode(...))`), hashes of calldata strings, `string.concat`, pre-Cancun copy loops and the free pointer moved past decoded returns are recognized and executed as compiled. ENS registrar controller 581 -> 417 lines, raw share 34.9% -> 14.6% (Dedaub 18.4%); held-out scores unchanged, wrong claims still 4 | Returned `bytes[]` decoding; structs returned by private functions (`MEM[v1]`); encodings with two dynamic values; strings at the folded pointer 0x80 |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

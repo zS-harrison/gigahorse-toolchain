@@ -29,15 +29,24 @@ def main():
         ("InliningFixture", "inlining"),
     ):
         compile_fixture(contract, prefix, version)
+    # Before Cancun, solc copies memory with a word loop instead of MCOPY. Legacy
+    # code generator only: these are its statement sequences.
+    compile_fixture("EncoderFixture", "encoder", version, evm_version="paris", variants=(False,))
 
 
-def compile_fixture(contract: str, prefix: str, version: str):
+def compile_fixture(
+    contract: str,
+    prefix: str,
+    version: str,
+    evm_version: str = "cancun",
+    variants: tuple[bool, ...] = (False, True),
+):
     source = FIXTURES / f"{contract}.sol"
-    for via_ir in (False, True):
+    for via_ir in variants:
         settings = {
             "optimizer": {"enabled": True, "runs": 200},
             "viaIR": via_ir,
-            "evmVersion": "cancun",
+            "evmVersion": evm_version,
             "metadata": {"bytecodeHash": "none", "appendCBOR": False},
             "outputSelection": {
                 "*": {

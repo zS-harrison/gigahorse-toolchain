@@ -108,7 +108,9 @@ LEGEND = [
     "  (rules solc-abi-*); they check (in solc's order), allocate at the free pointer and write memory as compiled.",
     "  Struct members print as .f0, .f1, ... by position; a `bytes` member may be `string` in the source.",
     '  hex"..." in abi.encodePacked is exactly those bytes. A call argument or .call(b) naming a bytes',
-    "  value b sends its ABI encoding (resp. its bytes).",
+    "  value b sends its ABI encoding (resp. its bytes). A dynamic calldata argument x passed on whole (to a",
+    "  call, an event or abi.encode) is encoded from calldata; for `bytes[]`, each element's offset and length",
+    "  are checked as compiled (a failed check reverts without data).",
     "Memory objects (allocated at the free pointer, rule memory-object): `new struct(k)` is k words, not zeroed;",
     "  `struct(a, b)` the same with its words written in order; v.wordN is MEM[v + 32*N]. `new bytes(n)` /",
     "  `new uint256[](n)` write the length word (v.length) and reserve the data (v[i] is word i after it);",
@@ -123,6 +125,9 @@ LEGEND = [
     "  (rule error-padding-not-modeled); the reason, its length and offset are exact.",
     "Hidden memory writes: proven unread, or ABI temporaries of a represented call/event/return that are not",
     "  re-read through the same pointer (solc memory discipline; such lines carry rule assumes-solc-memory-discipline).",
+    "  A call whose returned words are decoded moves the free pointer past the returned data (hidden;",
+    "  rule returned-data-allocated). MCOPY(d, s, n) from a pre-Cancun copy loop (rule copy-loop) assumes",
+    "  d does not overlap s.",
 ]
 
 # Added when a function returns a narrow integer: its width comes from a mask (or a

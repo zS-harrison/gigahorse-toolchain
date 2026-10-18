@@ -27,7 +27,9 @@ from .ir import (
     Assign,
     Binary,
     Call,
+    CalldataArg,
     Const,
+    Emit,
     Env,
     Expr,
     ExprStmt,
@@ -55,6 +57,8 @@ from .passes import (
     iter_statements,
     map_bodies,
     statement_ids,
+    substitute,
+    variable_uses,
 )
 from .simplify import simplify
 
@@ -63,6 +67,8 @@ U64 = (1 << 64) - 1
 NOT31 = WORD ^ 31
 MSGDATA = ("env", "msg.data")
 COMMUTATIVE = {"&", "|", "^", "==", "!=", "*", "&&", "||"}
+# Printed markers of a dynamic call argument given by a pointer to its encoding.
+DYNAMIC_MARKERS = {"bytesAt", "stringAt", "arrayAt", "dataAt"}
 VALIDATED = (
     {"address", "bool"}
     | {f"uint{n}" for n in range(8, 256, 8)}
@@ -889,7 +895,372 @@ def _read_after(statements: list[Stmt], names: set[str]) -> bool:
     return False
 
 
-# --- ABI calls staged at the free pointer (solc 0.8 legacy code generator) -------------
+# --- ABI encodings with one dynamic tail (solc 0.8 legacy code generator) -------------
+
+
+def copy_loops(statements: list[Stmt], pointers: set[str]) -> list[Stmt]:
+    """solc 0.8's copy_memory_to_memory_with_cleanup before Cancun  ->  MCOPY.
+
+    `i = 0; while (i < L) { MEM[i + D] = MEM[i + S]; i = i + 32 } MEM[D + L] = 0`
+    copies whole words; the bytes past L that the last word moves lie under the
+    zero word written next. When D does not overlap S + L, MCOPY(D, S, L) and
+    the zero word leave the same memory: D is relative to a free-pointer read
+    and S is not (solc copies an existing value into new memory; rule
+    assumes-solc-memory-discipline).
+    """
+    t = Tracker(frozenset())
+    result: list[Stmt] = []
+    index = 0
+    while index < len(statements):
+        window = statements[index : index + 3]
+        replacement = _copy_loop(window, pointers, t) if len(window) == 3 else None
+        if replacement is not None and not variable_uses(statements[index + 3 :])[replacement[1]]:
+            result.extend(replacement[0])
+            index += 3
+            continue
+        result.append(statements[index])
+        index += 1
+    return result
+
+
+def _single_assignment(stmt: Stmt) -> tuple[Var, Expr] | None:
+    """(target, value) of `x = e`, printed from an Assign or a one-target ParallelAssign."""
+    if isinstance(stmt, Assign) and len(stmt.targets) == 1:
+        target, value = stmt.targets[0], stmt.value
+    elif isinstance(stmt, ParallelAssign) and len(stmt.targets) == 1:
+        target, value = stmt.targets[0], stmt.values[0]
+    else:
+        return None
+    return (target, value) if isinstance(target, Var) and is_local(target) else None
+
+
+def _copy_loop(window: list[Stmt], pointers: set[str], t: Tracker) -> tuple[list[Stmt], str] | None:
+    init, loop, cleanup = window
+    first = _single_assignment(init)
+    if not (
+        first is not None
+        and isinstance(first[1], Const)
+        and first[1].value == 0
+        and isinstance(loop, While)
+        and isinstance(loop.condition, Binary)
+        and loop.condition.op == "<"
+        and isinstance(loop.condition.left, Var)
+        and loop.condition.left.name == first[0].name
+        and len(loop.body) == 2
+    ):
+        return None
+    counter = loop.condition.left.name
+    length = loop.condition.right
+    copy, step = loop.body
+    stored = _store(copy)
+    increment = _single_assignment(step)
+    if (
+        stored is None
+        or not isinstance(stored[1], Index)
+        or not _memory_target(stored[1])
+        or increment is None
+        or increment[0].name != counter
+        or not _memoryless(length)
+        or counter in {n.name for n in _walk(length) if isinstance(n, Var)}
+    ):
+        return None
+    i = ("var", counter)
+    zero = {counter: Const(0)}
+    destination = simplify(substitute(stored[0], zero))
+    source = simplify(substitute(stored[1].key, zero))
+    if (
+        t.canon(increment[1]) != plus(i, 32)
+        or t.canon(stored[0]) != add(t.canon(destination), i)
+        or t.canon(stored[1].key) != add(t.canon(source), i)
+        or counter in {n.name for n in (*_walk(destination), *_walk(source)) if isinstance(n, Var)}
+    ):
+        return None
+    clean = _store(cleanup)
+    if (
+        clean is None
+        or t.canon(clean[1]) != ("const", 0)
+        or t.canon(clean[0]) != add(t.canon(destination), t.canon(length))
+    ):
+        return None
+    into = {n.name for n in _walk(destination) if isinstance(n, Var)} & pointers
+    if not into or into & {n.name for n in _walk(source) if isinstance(n, Var)}:
+        return None
+    mcopy = ExprStmt(
+        Call("MCOPY", (destination, source, length)),
+        evidence=frozenset(init.evidence) | frozenset(loop.evidence),
+        hidden=statement_ids(init) | statement_ids(loop),
+        rules=frozenset({"copy-loop", "assumes-solc-memory-discipline"}),
+        origin=loop.origin,
+    )
+    return [mcopy, cleanup], counter
+
+
+@dataclass
+class Encoding:
+    """Statements writing an ABI encoding at `start` (offsets relative to it)."""
+
+    start: Form
+    words: dict[int, Expr] = field(default_factory=dict)
+    moved: dict[int, tuple[Form, Form]] = field(default_factory=dict)  # MCOPY
+    copied: dict[int, tuple[Form, Form]] = field(default_factory=dict)  # CALLDATACOPY
+    zeros: list[tuple[int, Form]] = field(default_factory=list)
+    arrays: dict[int, tuple[Var, Form]] = field(default_factory=dict)  # bytes[] tails
+    lengths: set[str] = field(default_factory=set)  # locals holding a memory length
+
+
+def _collect_encoding(c: Cursor, t: Tracker, start: Form, stop) -> Encoding:
+    """Consume the stores, copies and `bytes[]` loops of an encoding up to `stop(stmt)`."""
+    e = Encoding(start)
+    while True:
+        stmt = c.peek()
+        expect(stmt is not None)
+        assert stmt is not None
+        if stop(stmt):
+            return e
+        if isinstance(stmt, ParallelAssign):
+            offset, source, end = _calldata_array_tail(c, t, e)
+            e.arrays[offset] = (source, end)
+            continue
+        c.take()
+        stored = _store(stmt)
+        moved = _copy(stmt, "MCOPY")
+        copied = _copy(stmt, "CALLDATACOPY")
+        if stored is not None:
+            delta = add(t.canon(stored[0]), start, -1)
+            offset = constant_of(delta)
+            if offset is not None:
+                expect(offset not in e.words)
+                e.words[offset] = stored[1]
+                continue
+            terms, const = _parts(delta)
+            expect(len(terms) == 1 and c.same(stored[1], ("const", 0)))
+            ((atom, coeff),) = terms.items()
+            expect(coeff == 1)
+            e.zeros.append((const, atom))
+        elif moved is not None or copied is not None:
+            kind = e.moved if moved is not None else e.copied
+            destination, source, size = moved or copied  # type: ignore[misc]
+            offset = constant_of(add(t.canon(destination), start, -1))
+            expect(offset is not None and offset not in kind)
+            assert offset is not None
+            kind[offset] = (t.canon(source), t.canon(size))
+        elif (
+            isinstance(stmt, Assign)
+            and len(stmt.targets) == 1
+            and is_local(stmt.targets[0])
+            and isinstance(stmt.value, Index)
+            and _memory_target(stmt.value)
+        ):
+            # A `bytes memory` value's length, read before it is copied.
+            t.env[stmt.targets[0].name] = ("idx", MEMORY, t.canon(stmt.value.key))
+            e.lengths.add(stmt.targets[0].name)
+        else:
+            raise NoMatch
+
+
+def _calldata_array_tail(c: Cursor, t: Tracker, e: Encoding) -> tuple[int, Var, Form]:
+    """A `bytes[] calldata x` value encoded at T (solc's abi_encode_t_array$_t_bytes_calldata...).
+
+    `MEM[T] = x.length` (already collected), then `(i, s, q, h) = (0, x.data,
+    T + 32 + (x.length << 5), T + 32); while (i < x.length) { MEM[h] = q - (T +
+    32); require(int256(r) < int256(msg.data.length - x - 63)); require(n <=
+    2**64-1); require(int256(x.data + r + 32) <= int256(msg.data.length - n));
+    MEM[q] = n; CALLDATACOPY(q + 32, x.data + r + 32, n); MEM[q + 32 + n] = 0;
+    (i, s, q, h) = (i + 1, s + 32, q + round(n) + 32, h + 32) }` with r =
+    msg.data[s] (an element's offset) and n = msg.data[x.data + r] (its length).
+    The encoding ends at q.
+    """
+    init = c.take()
+    expect(
+        isinstance(init, ParallelAssign)
+        and len(init.targets) == 4
+        and all(is_local(x) for x in init.targets)
+    )
+    assert isinstance(init, ParallelAssign)
+    names = [x.name for x in init.targets if isinstance(x, Var)]
+    initial = dict(zip(names, init.values, strict=True))
+    data = [
+        v
+        for v in init.values
+        if isinstance(v, Member)
+        and v.name == "data"
+        and isinstance(v.base, Var)
+        and v.base.name in t.dynamic
+    ]
+    expect(len(data) == 1)
+    source = data[0].base
+    assert isinstance(source, Var)
+    x = t.canon(source)
+    length = ("idx", MSGDATA, x)
+    roles: dict[str, str] = {}
+    ends: list[str] = []
+    for name, value in initial.items():
+        form = t.canon(value)
+        if form == ("const", 0):
+            roles["i"] = name
+        elif form == plus(x, 32):
+            roles["s"] = name
+        else:
+            ends.append(name)
+    expect(len(ends) == 2 and "i" in roles and "s" in roles)
+    shift = t.canon(Binary("<<", Member(source, "length"), Const(5)))
+    first, second = (t.canon(initial[n]) for n in ends)
+    if add(first, second, -1) == shift:
+        roles["q"], roles["h"] = ends
+    else:
+        expect(add(second, first, -1) == shift)
+        roles["h"], roles["q"] = ends
+    heads = t.canon(initial[roles["h"]])
+    tail = plus(heads, -32)
+    offset = constant_of(add(tail, e.start, -1))
+    expect(offset is not None and offset in e.words and c.same(e.words[offset], length))
+    assert offset is not None
+    i, s, q, h = (("var", roles[k]) for k in ("i", "s", "q", "h"))
+    loop = c.take()
+    expect(
+        isinstance(loop, While)
+        and loop.condition is not None
+        and c.same(loop.condition, ("bin", "<", i, length))
+        and len(loop.body) == 8
+    )
+    assert isinstance(loop, While)
+    head, bounds, limit, fits, stored_length, copy, cleanup, step = loop.body
+    relative = ("idx", MSGDATA, s)
+    element = add(plus(x, 32), relative)
+    size = ("idx", MSGDATA, element)
+    size_env = ("env", "msg.data.length")
+    stored = _store(head)
+    expect(stored is not None and c.same(stored[0], h) and c.same(stored[1], add(q, heads, -1)))
+    check = _check(bounds, "s<")
+    expect(
+        check is not None
+        and c.same(check[0], relative)
+        and c.same(check[1], plus(add(size_env, x, -1), -63))
+    )
+    check = _check(limit, "<=")
+    expect(check is not None and c.same(check[0], size) and _is_u64(check[1]))
+    check = _check(fits, "s<=")
+    expect(
+        check is not None
+        and c.same(check[0], plus(element, 32))
+        and c.same(check[1], add(size_env, size, -1))
+    )
+    stored = _store(stored_length)
+    expect(stored is not None and c.same(stored[0], q) and c.same(stored[1], size))
+    moved = _copy(copy, "CALLDATACOPY")
+    expect(
+        moved is not None
+        and c.same(moved[0], plus(q, 32))
+        and c.same(moved[1], plus(element, 32))
+        and c.same(moved[2], size)
+    )
+    stored = _store(cleanup)
+    expect(stored is not None and c.same(stored[0], add(plus(q, 32), size)))
+    expect(stored is not None and c.same(stored[1], ("const", 0)))
+    expect(
+        isinstance(step, ParallelAssign)
+        and [x.name if isinstance(x, Var) else None for x in step.targets] == names
+    )
+    assert isinstance(step, ParallelAssign)
+    steps = dict(zip(names, step.values, strict=True))
+    rounded_size = _rounded_form(size)
+    expect(
+        c.same(steps[roles["i"]], plus(i, 1))
+        and c.same(steps[roles["s"]], plus(s, 32))
+        and c.same(steps[roles["h"]], plus(h, 32))
+        and c.same(steps[roles["q"]], plus(add(q, rounded_size), 32))
+    )
+    for name in names:
+        t.env.pop(name, None)
+    return offset, source, q
+
+
+def _rounded_form(form: Form) -> Form:
+    """The canonical form of round_up_to_mul_of_32(x) for x's form."""
+    left, right = sorted((plus(form, 31), ("const", NOT31)), key=repr)
+    return ("bin", "&", left, right)
+
+
+def _tail(
+    e: Encoding, offset: int, t: Tracker, before: list[Stmt], evidence: frozenset[str]
+) -> tuple[Expr, Form, int, bool]:
+    """The dynamic value encoded at `offset`: (printed value, end, facts used, empty)."""
+    start = e.start
+    length_expr = e.words.get(offset)
+    expect(length_expr is not None)
+    assert length_expr is not None
+    length = t.canon(length_expr)
+    if offset in e.arrays:
+        source, end = e.arrays[offset]
+        return CalldataArg(source, "bytes[]", evidence=evidence), end, 1, False
+    if offset + 32 in e.copied:
+        expect(
+            isinstance(length_expr, Member)
+            and length_expr.name == "length"
+            and isinstance(length_expr.base, Var)
+            and length_expr.base.name in t.dynamic
+        )
+        assert isinstance(length_expr, Member) and isinstance(length_expr.base, Var)
+        source = length_expr.base
+        expect(e.copied[offset + 32] == (plus(t.canon(source), 32), length))
+        expect((offset + 32, length) in e.zeros)
+        end = add(plus(start, offset + 32), t.canon(rounded(length_expr)))
+        return CalldataArg(source, "bytes", evidence=evidence), end, 1, False
+    if length == ("const", 0) and offset + 32 not in e.moved:
+        # An empty bytes value: only its zero length word is written.
+        return Call("emptyBytes", (), evidence=evidence), plus(start, offset + 32), 0, True
+    expect(length[0] == "idx" and length[1] == MEMORY)
+    data = length[2]
+    expect(e.moved.get(offset + 32) == (plus(data, 32), length))
+    expect((offset + 32, length) in e.zeros)
+    end = add(plus(start, offset + 32), t.canon(rounded(length_expr)))
+    pointer = _expression_for(data, t, before)
+    expect(pointer is not None)
+    assert pointer is not None
+    return MemoryBytes(pointer, evidence=evidence), end, 1, False
+
+
+def _arguments(
+    e: Encoding,
+    first: int,
+    args: tuple[Expr, ...],
+    t: Tracker,
+    before: list[Stmt],
+    dynamic_args: bool = True,
+) -> tuple[list[Expr], Form]:
+    """Printed arguments checked against the heads at `first` (+ 32i) and the tail.
+
+    A dynamic argument is printed as a marker (`stringAt(p)`) or as the bare
+    pointer p to its encoded value (the native model's form when the callee's
+    signature is unknown); p is where its tail starts. Returns the arguments
+    (dynamic ones as the values encoded) and the encoding's end.
+    """
+    heads = first + 32 * len(args)
+    expect({o for o in e.words if o < heads} == {first + 32 * i for i in range(len(args))})
+    end = plus(e.start, heads)
+    arguments: list[Expr] = []
+    tails = facts = 0
+    for i, arg in enumerate(args):
+        head = e.words[first + 32 * i]
+        marker = isinstance(arg, Call) and arg.name in DYNAMIC_MARKERS
+        pointer = arg.args[0] if marker else arg
+        if (
+            isinstance(head, Const)
+            and head.value == heads - first
+            and (marker or (dynamic_args and t.canon(pointer) == plus(e.start, heads)))
+        ):
+            expect(tails == 0)  # one dynamic argument: its tail ends the encoding
+            expect(t.canon(pointer) == plus(e.start, heads))
+            value, end, used, _ = _tail(e, heads, t, before, arg.all_evidence())
+            tails, facts = 1, used
+            arguments.append(value)
+            continue
+        expect(not marker and t.canon(arg) == t.canon(head))
+        arguments.append(arg)
+    expect(len(e.words) == len(args) + tails)
+    expect(len(e.moved) + len(e.copied) + len(e.arrays) == facts)
+    expect(len(e.zeros) == (facts if not e.arrays else 0))
+    return arguments, end
 
 
 def match_staged_call(
@@ -897,72 +1268,38 @@ def match_staged_call(
 ) -> Rewrite | None:
     """An ABI call whose input solc writes at the free pointer without moving it.
 
-    `c = MEM[64]; MEM[c] = selector; MEM[c + 4 + 32i] = head_i; ...` with, for
-    a `bytes memory b` argument, its offset as the head and then `L = MEM[b];
-    MEM[c + 4 + o] = L; MCOPY(c + 4 + o + 32, b + 32, L); MEM[c + 4 + o + 32 + L]
-    = 0`; then `d = MEM[64]` (the same pointer), an optional extcodesize check
-    and the call with input MEM[d : end]. The printed arguments are checked
-    against these heads; a `bytesAt(...)` marker becomes the bytes value `b`.
+    `c = MEM[64]; MEM[c] = selector; MEM[c + 4 + 32i] = head_i; ...` (or the
+    selector stored where the pointer already is), with one dynamic argument's
+    tail after the heads: a `bytes memory b` (`L = MEM[b]; MEM[t] = L; MCOPY(t +
+    32, b + 32, L); MEM[t + 32 + L] = 0`), a calldata `bytes`/`string` x (its
+    length, CALLDATACOPY from x.data and a zero word) or a calldata `bytes[]`
+    (the element loop); then `d = MEM[64]` (the same pointer), an optional
+    extcodesize check and the call with input MEM[d : end]. The printed
+    arguments are checked against these heads; a dynamic one becomes the value.
     """
     t = tracker.copy()
     c = Cursor(statements, index, t)
     try:
         stmt = c.take()
         pointer_var = _pointer_read(stmt)
-        expect(pointer_var is not None)
-        assert pointer_var is not None
-        t.observe(stmt)
-        start = t.canon(pointer_var)
-        stored = _store(c.take())
+        if pointer_var is not None:
+            t.observe(stmt)
+            start = t.canon(pointer_var)
+            stored = _store(c.take())
+        else:
+            # The input starts where the free pointer already is (e.g. right
+            # after a packed hash moved it), without reading it again.
+            expect(t.fp is not None)
+            assert t.fp is not None
+            start = t.fp
+            stored = _store(stmt)
         expect(stored is not None and c.same(stored[0], start) and isinstance(stored[1], Const))
         assert stored is not None and isinstance(stored[1], Const)
         selector = stored[1].value
         expect(selector >> 224 != 0 and selector & ((1 << 224) - 1) == 0)
-        words: dict[int, Expr] = {}
-        lengths: dict[str, Form] = {}
-        copied: dict[int, tuple[Form, Form]] = {}
-        zeros: list[tuple[int, Form]] = []
-        while True:
-            stmt = c.peek()
-            expect(stmt is not None)
-            assert stmt is not None
-            if _pointer_read(stmt) is not None:
-                break
-            c.take()
-            stored = _store(stmt)
-            moved = _copy(stmt, "MCOPY")
-            if stored is not None:
-                delta = add(t.canon(stored[0]), start, -1)
-                offset = constant_of(delta)
-                if offset is not None:
-                    expect(offset >= 4 and offset not in words)
-                    words[offset] = stored[1]
-                    continue
-                terms, const = _parts(delta)
-                expect(len(terms) == 1 and c.same(stored[1], ("const", 0)))
-                ((atom, coeff),) = terms.items()
-                expect(coeff == 1)
-                zeros.append((const, atom))
-            elif moved is not None:
-                offset = constant_of(add(t.canon(moved[0]), start, -1))
-                expect(offset is not None and offset not in copied)
-                assert offset is not None
-                copied[offset] = (t.canon(moved[1]), t.canon(moved[2]))
-            elif (
-                isinstance(stmt, Assign)
-                and len(stmt.targets) == 1
-                and is_local(stmt.targets[0])
-                and isinstance(stmt.value, Index)
-                and isinstance(stmt.value.base, Env)
-                and stmt.value.base.name == "MEM"
-            ):
-                t.env[stmt.targets[0].name] = ("idx", MEMORY, t.canon(stmt.value.key))
-                lengths[stmt.targets[0].name] = t.env[stmt.targets[0].name]
-            else:
-                raise NoMatch
+        e = _collect_encoding(c, t, start, lambda s: _pointer_read(s) is not None)
         stmt = c.take()
         again = _pointer_read(stmt)
-        expect(again is not None)
         assert again is not None
         t.observe(stmt)
         expect(t.canon(again) == start)
@@ -973,75 +1310,354 @@ def match_staged_call(
         expect(
             isinstance(call_stmt, Assign)
             and isinstance(call_stmt.value, ExternalCallExpr)
-            and call_stmt.value.method is not None
-            and call_stmt.value.raw_input is None
             and call_stmt.value.kind in {"call", "staticcall"}
             and "input" in call_stmt.meta
         )
         assert isinstance(call_stmt, Assign) and isinstance(call_stmt.value, ExternalCallExpr)
         call = call_stmt.value
-        heads = 4 + 32 * len(call.args)
-        expect({o for o in words if o < heads} == {4 + 32 * i for i in range(len(call.args))})
-        end = plus(start, heads)
-        arguments: list[Expr] = []
-        tails = empties = 0
-        for i, arg in enumerate(call.args):
-            head = words[4 + 32 * i]
-            if isinstance(arg, Call) and arg.name in {"bytesAt", "dataAt"}:
-                expect(isinstance(head, Const) and head.value == heads - 4 + tails)
-                assert isinstance(head, Const)
-                offset = 4 + head.value
-                expect(c.same(arg.args[0], plus(start, offset)))
-                length_expr = words.get(offset)
-                expect(length_expr is not None and tails == 0)
-                assert length_expr is not None
-                length = t.canon(length_expr)
-                if length == ("const", 0) and offset + 32 not in copied:
-                    # An empty bytes value: only its zero length word is written.
-                    end = plus(start, offset + 32)
-                    tails = 1
-                    empties = 1
-                    arguments.append(Call("emptyBytes", (), evidence=arg.all_evidence()))
-                    continue
-                expect(length[0] == "idx" and length[1] == MEMORY)
-                data = length[2]
-                expect(copied.get(offset + 32) == (plus(data, 32), length))
-                expect((offset + 32, length) in zeros)
-                expect(tails == 0)  # one dynamic argument: its tail ends the input
-                end = add(plus(start, offset + 32), t.canon(rounded(length_expr)))
-                tails = 1
-                pointer = _expression_for(data, t, statements[: c.start])
-                expect(pointer is not None)
-                arguments.append(MemoryBytes(pointer, evidence=arg.all_evidence()))
-            else:
-                expect(c.same(arg, t.canon(head)))
-                arguments.append(arg)
-        expect(len(words) == len(call.args) + tails)
-        expect(len(copied) == len(zeros) == tails - empties)
+        encoded = call.raw_input
+        if call.method is not None:
+            expect(encoded is None)
+            args = call.args
+        else:
+            # A low-level call of abi.encodeWithSelector(selector, args).
+            expect(
+                isinstance(encoded, Call)
+                and encoded.name == "abi.encodeWithSelector"
+                and isinstance(encoded.args[0], Raw)
+                and encoded.args[0].text.split()[0] == f"0x{selector >> 224:08x}"
+            )
+            assert isinstance(encoded, Call)
+            args = encoded.args[1:]
+        arguments, end = _arguments(e, 4, args, t, statements[: c.start])
         expect(
             c.same(call_stmt.meta["input"][0], start) and c.same(call_stmt.meta["input"][1], end)
         )
     except (NoMatch, IndexError):
         return None
     consumed = [s for s in c.consumed() if s is not call_stmt and s not in checks]
-    removed = {pointer_var.name, again.name, *lengths}
+    removed = {again.name, *e.lengths} | ({pointer_var.name} if pointer_var else set())
     if _read_after(statements[c.index :], removed):
         return None
     fp = Index(Env("MEM"), Const(0x40))
-    renamed = dict.fromkeys((pointer_var.name, again.name), fp)
-    from .passes import substitute
-
-    call_stmt.value = replace(call, args=tuple(arguments))
+    renamed = dict.fromkeys(removed, fp)
+    if call.method is not None:
+        call_stmt.value = replace(call, args=tuple(arguments))
+    else:
+        assert isinstance(encoded, Call)
+        call_stmt.value = replace(
+            call, raw_input=replace(encoded, args=(encoded.args[0], *arguments))
+        )
     call_stmt.meta = dict(call_stmt.meta)
     call_stmt.meta.pop("input")
     call_stmt.meta["selector"] = f"0x{selector >> 224:08x}"
     if "output" in call_stmt.meta:
-        call_stmt.meta["output"] = tuple(substitute(e, renamed) for e in call_stmt.meta["output"])
+        call_stmt.meta["output"] = tuple(substitute(x, renamed) for x in call_stmt.meta["output"])
     call_stmt.uncertain = None
     call_stmt.rules = call_stmt.rules | {"abi-input-verified", "staged-at-free-pointer"}
     call_stmt.hidden = call_stmt.hidden.union(*(statement_ids(s) for s in consumed))
     tracker.adopt(t)
     return Rewrite(c.index, [*checks, call_stmt])
+
+
+def _single_tail(e: Encoding, first: int) -> tuple[int, int]:
+    """(tail offset, index of its head) for an encoding whose heads start at `first`."""
+    tails = sorted({*e.arrays, *(o - 32 for o in e.copied), *(o - 32 for o in e.moved)})
+    expect(len(tails) == 1)
+    tail = tails[0]
+    expect(tail > first and (tail - first) % 32 == 0)
+    count = (tail - first) // 32
+    expect(set(e.words) == {first + 32 * i for i in range(count)} | {tail})
+    dynamic = [
+        i
+        for i in range(count)
+        if isinstance(e.words[first + 32 * i], Const)
+        and e.words[first + 32 * i].value == tail - first
+    ]
+    expect(len(dynamic) == 1)
+    return tail, dynamic[0]
+
+
+def _encoded_values(
+    e: Encoding, first: int, t: Tracker, before: list[Stmt], context: CodecContext
+) -> tuple[list[Expr], list[str], Form]:
+    """Values (one dynamic), their ABI types and the end of an encoding with heads at `first`."""
+    tail, dynamic = _single_tail(e, first)
+    value, end, used, _ = _tail(e, tail, t, before, frozenset())
+    expect(len(e.moved) + len(e.copied) + len(e.arrays) == used)
+    expect(len(e.zeros) == (used if not e.arrays else 0))
+    values: list[Expr] = []
+    kinds: list[str] = []
+    for i in range((tail - first) // 32):
+        if i == dynamic:
+            values.append(value)
+            kinds.append(value.abi_type if isinstance(value, CalldataArg) else "bytes")
+        else:
+            values.append(e.words[first + 32 * i])
+            kinds.append(_value_type(e.words[first + 32 * i], context.arguments))
+    return values, kinds, end
+
+
+def match_event_encoding(
+    statements: list[Stmt], index: int, tracker: Tracker, context: CodecContext
+) -> Rewrite | None:
+    """`emit E(topics, a0, ..., an)` whose data solc encodes at the free pointer.
+
+    `p = MEM[64]`, the heads at p + 32i with one dynamic value's tail after them
+    (see match_staged_call), then the log of MEM[MEM[64] : end]. The interpreter
+    writes the same encoding at the pointer and logs it.
+    """
+    t = tracker.copy()
+    c = Cursor(statements, index, t)
+    try:
+        stmt = c.take()
+        pointer_var = _pointer_read(stmt)
+        expect(pointer_var is not None)
+        assert pointer_var is not None
+        t.observe(stmt)
+        start = t.canon(pointer_var)
+        e = _collect_encoding(c, t, start, lambda s: isinstance(s, Emit))
+        emit = c.take()
+        assert isinstance(emit, Emit)
+        data = emit.args[emit.indexed :]
+        expect(len(data) == 1 and isinstance(data[0], Slice) and data[0].space == "MEM")
+        region = data[0]
+        assert isinstance(region, Slice)
+        values, _, end = _encoded_values(e, 0, t, statements[: c.start], context)
+        expect(c.same(region.start, start) and c.same(region.end, end))
+    except (NoMatch, IndexError):
+        return None
+    consumed = [s for s in c.consumed() if s is not emit]
+    if _read_after(statements[c.index :], {pointer_var.name, *e.lengths}):
+        return None
+    emit.args = (*emit.args[: emit.indexed], *values)
+    emit.uncertain = None
+    emit.rules = emit.rules | {"abi-encoded-log", "staged-at-free-pointer"}
+    emit.hidden = emit.hidden.union(region.all_evidence(), *(statement_ids(s) for s in consumed))
+    tracker.adopt(t)
+    return Rewrite(c.index, [emit])
+
+
+def match_tuple_hash(
+    statements: list[Stmt], index: int, tracker: Tracker, context: CodecContext
+) -> Rewrite | None:
+    """`keccak256(abi.encode(a0, ..., an))` with one dynamic value.
+
+    abi.encode writes at the free pointer + 32 (heads, then the tail); then the
+    length word at the pointer and the pointer moved past the data (a `bytes
+    memory` value), or neither when nothing reads them; then the data is hashed.
+    """
+    t = tracker.copy()
+    c = Cursor(statements, index, t)
+    try:
+        stmt = c.take()
+        pointer_var = _pointer_read(stmt)
+        expect(pointer_var is not None)
+        assert pointer_var is not None
+        t.observe(stmt)
+        start = t.canon(pointer_var)
+        e = _collect_encoding(c, t, start, lambda s: _pointer_read(s) is not None)
+        stmt = c.take()
+        again = _pointer_read(stmt)
+        assert again is not None
+        t.observe(stmt)
+        expect(t.canon(again) == start)
+        values, kinds, end = _encoded_values(e, 32, t, statements[: c.start], context)
+        length_word = False
+        stored = _store(c.peek()) if c.peek() is not None else None
+        if stored is not None and c.same(stored[0], start):
+            expect(c.same(stored[1], add(end, plus(start, 32), -1)))
+            c.take()
+            update = _pointer_update(c.take())
+            expect(update is not None and c.same(update, end))
+            t.fp = end
+            length_word = True
+        consumer = c.take()
+        found = [
+            node
+            for expr in consumer.expressions()
+            for node in _walk(expr)
+            if isinstance(node, Call)
+            and node.name == "keccak256"
+            and len(node.args) == 1
+            and isinstance(node.args[0], Slice)
+            and c.same(node.args[0].start, plus(start, 32))
+            and c.same(node.args[0].end, end)
+        ]
+        expect(len(found) == 1)
+    except (NoMatch, IndexError):
+        return None
+    digest = found[0]
+    consumed = [s for s in c.consumed() if s is not consumer]
+    removed = {pointer_var.name, again.name, *e.lengths}
+    if isinstance(end, tuple) and end[0] == "var":
+        removed.add(end[1])
+    if _read_after(statements[c.index :], removed):
+        return None
+    layout: tuple[tuple[str, object], ...] = (
+        ("solc", "legacy-tuple"),
+        ("length_word", length_word),
+    )
+    codec = AbiCodec("encode", tuple(values), tuple(kinds), layout)
+    hashed = Call("keccak256", (codec,), evidence=digest.all_evidence(), rules=digest.rules)
+    from .types import map_statement_exprs
+
+    map_statement_exprs(consumer, lambda x: hashed if x is digest else x)
+    consumer.hidden = consumer.hidden.union(*(statement_ids(s) for s in consumed))
+    consumer.rules = consumer.rules | {"solc-abi-encode"}
+    tracker.adopt(t)
+    return Rewrite(c.index, [consumer])
+
+
+def match_return_allocation(
+    statements: list[Stmt], index: int, tracker: Tracker, context: CodecContext
+) -> Rewrite | None:
+    """`q = MEM[64]; r = returndata.length; MEM[64] = q + round(r)` after a call.
+
+    solc decodes returned words where the call wrote them, at the free pointer,
+    and moves the pointer past the returned data. The call (followed by at most
+    `require(success, returndata)`) takes these statements; r reads as
+    returndata.length. The interpreter moves the pointer after the call.
+    """
+    try:
+        call_stmt = None
+        for back in (1, 2):
+            candidate = statements[index - back] if index - back >= 0 else None
+            if isinstance(candidate, Assign) and isinstance(candidate.value, ExternalCallExpr):
+                call_stmt = candidate
+                between = statements[index - back + 1 : index]
+                break
+        expect(call_stmt is not None)
+        assert call_stmt is not None
+        expect(
+            call_stmt.value.kind in {"call", "staticcall"}
+            and all(
+                isinstance(s, Require)
+                and isinstance(s.payload, Env)
+                and s.payload.name == "returndata"
+                for s in between
+            )
+        )
+        pointer = _pointer_read(statements[index])
+        size = statements[index + 1]
+        update = _pointer_update(statements[index + 2])
+        expect(
+            pointer is not None
+            and isinstance(size, Assign)
+            and len(size.targets) == 1
+            and is_local(size.targets[0])
+            and isinstance(size.value, Member)
+            and size.value.name == "length"
+            and isinstance(size.value.base, Env)
+            and size.value.base.name == "returndata"
+            and update is not None
+        )
+        assert pointer is not None and isinstance(size, Assign) and update is not None
+        returned = size.targets[0]
+        assert isinstance(returned, Var)
+        t = Tracker(frozenset())
+        expect(t.canon(update) == t.canon(Binary("+", pointer, rounded(returned))))
+    except (NoMatch, IndexError):
+        return None
+    if _read_after(statements[index + 3 :], {pointer.name}):
+        return None
+    consumed = statements[index : index + 3]
+    call_stmt.meta = dict(call_stmt.meta)
+    call_stmt.meta["returns_allocated"] = True
+    call_stmt.rules = call_stmt.rules | {"returned-data-allocated"}
+    call_stmt.hidden = call_stmt.hidden.union(*(statement_ids(s) for s in consumed))
+    tracker.fp = None
+    return Rewrite(
+        index + 3,
+        [],
+        variables={
+            returned.name: Member(Env("returndata"), "length", evidence=size.value.evidence)
+        },
+    )
+
+
+def match_calldata_hash(
+    statements: list[Stmt], index: int, tracker: Tracker, context: CodecContext
+) -> Rewrite | None:
+    """`keccak256(bytes(x))` for a calldata `bytes`/`string` x (legacy code generator).
+
+    `p = MEM[64]; CALLDATACOPY(p, x.data, x.length); MEM[p + x.length] = 0;
+    [q = MEM[64];] h = keccak256(MEM[q : p + x.length])`: x's bytes are packed
+    at the free pointer (not moved), a zero word after them, and hashed. A read
+    of the pointer that later code uses is kept.
+    """
+    t = tracker.copy()
+    c = Cursor(statements, index, t)
+    try:
+        stmt = c.take()
+        pointer_var = _pointer_read(stmt)
+        expect(pointer_var is not None)
+        assert pointer_var is not None
+        t.observe(stmt)
+        start = t.canon(pointer_var)
+        copied = _copy(c.take(), "CALLDATACOPY")
+        expect(copied is not None)
+        assert copied is not None
+        size = copied[2]
+        expect(
+            isinstance(size, Member)
+            and size.name == "length"
+            and isinstance(size.base, Var)
+            and size.base.name in t.dynamic
+        )
+        assert isinstance(size, Member) and isinstance(size.base, Var)
+        source = size.base
+        length = t.canon(size)
+        expect(c.same(copied[0], start) and c.same(copied[1], plus(t.canon(source), 32)))
+        cleanup = _store(c.take())
+        expect(
+            cleanup is not None
+            and c.same(cleanup[0], add(start, length))
+            and c.same(cleanup[1], ("const", 0))
+        )
+        kept: list[Stmt] = []
+        stmt = c.peek()
+        if stmt is not None and _pointer_read(stmt) is not None:
+            c.take()
+            t.observe(stmt)
+            expect(t.canon(_pointer_read(stmt)) == start)
+            kept.append(stmt)
+        hashed = c.take()
+        found = [
+            node
+            for expr in hashed.expressions()
+            for node in _walk(expr)
+            if isinstance(node, Call)
+            and node.name == "keccak256"
+            and len(node.args) == 1
+            and isinstance(node.args[0], Slice)
+            and c.same(node.args[0].start, start)
+            and c.same(node.args[0].end, add(start, length))
+        ]
+        expect(len(found) == 1)
+    except (NoMatch, IndexError):
+        return None
+    digest = found[0]
+    if _read_after(statements[c.index :], {pointer_var.name}):
+        return None
+    if kept and not _read_after(statements[c.index :], {_pointer_read(kept[0]).name}):
+        kept = []
+    consumed = [s for s in c.consumed() if s is not hashed and s not in kept]
+    codec = AbiCodec(
+        "encodePacked",
+        (CalldataArg(source, "bytes", evidence=size.all_evidence()),),
+        ("bytes",),
+        (("solc", "legacy-packed-calldata"),),
+    )
+    value = Call("keccak256", (codec,), evidence=digest.all_evidence(), rules=digest.rules)
+    from .types import map_statement_exprs
+
+    map_statement_exprs(hashed, lambda x: value if x is digest else x)
+    hashed.hidden = hashed.hidden.union(*(statement_ids(s) for s in consumed))
+    hashed.rules = hashed.rules | {"solc-abi-encodePacked"}
+    tracker.adopt(t)
+    # The pointer is unchanged by the hash: its read can follow it, next to its use.
+    return Rewrite(c.index, [hashed, *kept])
 
 
 def _is_code_check(stmt: Stmt | None) -> bool:
@@ -1445,6 +2061,141 @@ def _rebase(form: Form, t: Tracker, buffer: Form) -> Form:
     return result
 
 
+def match_packed_bytes(
+    statements: list[Stmt], index: int, tracker: Tracker, context: CodecContext
+) -> Rewrite | None:
+    """`b = abi.encodePacked(e0, e1, ...)` (also string.concat) with a bytes element.
+
+    From p = MEM[64], each element is written at the running position after
+    the length word: a `bytes memory` value copied (MCOPY) or a calldata
+    `bytes` value (CALLDATACOPY), each followed by a zero word, or a static
+    value as a left-aligned word; then `b = MEM[64]` (the same pointer), the
+    length at b and the pointer moved to the end of the data (not rounded).
+    """
+    t = tracker.copy()
+    c = Cursor(statements, index, t)
+    try:
+        stmt = c.take()
+        pointer_var = _pointer_read(stmt)
+        expect(pointer_var is not None)
+        assert pointer_var is not None
+        t.observe(stmt)
+        start = t.canon(pointer_var)
+        position = plus(start, 32)
+        elements: list[Expr] = []
+        kinds: list[str] = []
+        pending: tuple[Form, Expr] | None = None  # a static word, its width not known yet
+        lengths: set[str] = set()
+
+        def close(at: Form) -> None:
+            nonlocal pending
+            if pending is None:
+                return
+            width = constant_of(add(at, pending[0], -1))
+            expect(width is not None and 0 < width <= 32)
+            assert width is not None
+            element = _packed_element(pending[1], width)
+            expect(element is not None)
+            assert element is not None
+            elements.append(annotate(element[0], pending[1].all_evidence()))
+            kinds.append(element[1])
+            pending = None
+
+        while True:
+            stmt = c.peek()
+            expect(stmt is not None)
+            assert stmt is not None
+            if _pointer_read(stmt) is not None:
+                break
+            c.take()
+            moved = _copy(stmt, "MCOPY")
+            copied = _copy(stmt, "CALLDATACOPY")
+            stored = _store(stmt)
+            if (
+                isinstance(stmt, Assign)
+                and len(stmt.targets) == 1
+                and is_local(stmt.targets[0])
+                and isinstance(stmt.value, Index)
+                and _memory_target(stmt.value)
+            ):
+                t.env[stmt.targets[0].name] = ("idx", MEMORY, t.canon(stmt.value.key))
+                lengths.add(stmt.targets[0].name)
+            elif moved is not None or copied is not None:
+                destination, source, size = moved or copied  # type: ignore[misc]
+                at = t.canon(destination)
+                if pending is not None:
+                    close(at)
+                    position = at
+                expect(at == position)
+                length = t.canon(size)
+                if moved is not None:
+                    expect(length[0] == "idx" and length[1] == MEMORY)
+                    data = length[2]
+                    expect(t.canon(source) == plus(data, 32))
+                    pointer = _expression_for(data, t, statements[: c.start])
+                    expect(pointer is not None)
+                    assert pointer is not None
+                    elements.append(MemoryBytes(pointer, evidence=source.all_evidence()))
+                else:
+                    expect(
+                        isinstance(size, Member)
+                        and size.name == "length"
+                        and isinstance(size.base, Var)
+                        and size.base.name in t.dynamic
+                    )
+                    assert isinstance(size, Member) and isinstance(size.base, Var)
+                    expect(t.canon(source) == plus(t.canon(size.base), 32))
+                    elements.append(CalldataArg(size.base, "bytes", evidence=size.all_evidence()))
+                kinds.append("bytes")
+                cleanup = _store(c.take())
+                expect(
+                    cleanup is not None
+                    and c.same(cleanup[0], add(position, length))
+                    and c.same(cleanup[1], ("const", 0))
+                )
+                position = add(position, length)
+            elif stored is not None:
+                at = t.canon(stored[0])
+                if pending is not None:
+                    close(at)
+                    position = at
+                expect(at == position)
+                pending = (at, stored[1])
+            else:
+                raise NoMatch
+        expect(any(k == "bytes" for k in kinds))
+        stmt = c.take()
+        result = _pointer_read(stmt)
+        assert result is not None
+        t.observe(stmt)
+        expect(t.canon(result) == start)
+        stored = _store(c.take())
+        expect(stored is not None and c.same(stored[0], start))
+        assert stored is not None
+        update = _pointer_update(c.take())
+        expect(update is not None)
+        assert update is not None
+        end = t.canon(update)
+        close(end)
+        if kinds[-1] == "bytes":
+            expect(end == position)
+        expect(c.same(stored[1], add(end, plus(start, 32), -1)))
+        t.fp = end
+    except (NoMatch, IndexError):
+        return None
+    consumed = c.consumed()
+    if _read_after(statements[c.index :], {pointer_var.name, *lengths}):
+        return None
+    node = Assign(
+        (result,),
+        AbiCodec("encodePacked", tuple(elements), tuple(kinds), (("solc", "legacy-packed-bytes"),)),
+        hidden=frozenset().union(*(statement_ids(s) for s in consumed)),
+        rules=frozenset({"solc-abi-encodePacked"}),
+    )
+    tracker.adopt(t)
+    return Rewrite(c.index, [node])
+
+
 # --- driver -------------------------------------------------------------------------
 
 
@@ -1469,10 +2220,15 @@ class CodecContext:
 RECOGNIZERS = (
     match_struct_decode,
     match_struct_encode,
+    match_calldata_hash,
+    match_tuple_hash,
     match_staged_call,
+    match_event_encoding,
     match_selector_buffer,
     match_bytes_call,
     match_packed_hash,
+    match_packed_bytes,
+    match_return_allocation,
 )
 
 
@@ -1491,8 +2247,14 @@ def recognize_abi_coders(
         if isinstance(node, Var)
     }
     context = CodecContext(structs, used, dict(arguments or {}))
+    pointers = {
+        target.name
+        for stmt in iter_statements(state.body)
+        if (target := _pointer_read(stmt)) is not None
+    }
 
     def visit(statements: list[Stmt]) -> list[Stmt]:
+        statements = copy_loops(statements, pointers)
         tracker = Tracker(dynamic)
         result: list[Stmt] = []
         index = 0

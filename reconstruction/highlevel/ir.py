@@ -253,6 +253,25 @@ class MemoryBytes(Expr):
 
 
 @dataclass(frozen=True)
+class CalldataArg(Expr):
+    """A dynamic calldata argument passed on whole: `bytes`/`string`, or `bytes[]`.
+
+    `pointer` is its calldata position (its length word). Printed as the
+    pointer. ABI-encoding it copies the value from calldata; for `bytes[]`, each
+    element with solc's checks on its offset and length (revert without data).
+    """
+
+    pointer: Expr
+    abi_type: str = "bytes"  # "bytes" (also string) | "bytes[]"
+
+    def children(self) -> tuple[Expr, ...]:
+        return (self.pointer,)
+
+    def with_children(self, children: tuple[Expr, ...]) -> Expr:
+        return replace(self, pointer=children[0])
+
+
+@dataclass(frozen=True)
 class CustomError(Expr):
     """A revert payload: a 4-byte selector followed by one 32-byte word per argument.
 
