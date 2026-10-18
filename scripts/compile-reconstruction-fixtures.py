@@ -33,6 +33,14 @@ def main():
     # Before Cancun, solc copies memory with a word loop instead of MCOPY. Legacy
     # code generator only: these are its statement sequences.
     compile_fixture("EncoderFixture", "encoder", version, evm_version="paris", variants=(False,))
+    compile_fixture("ReturnDecodeFixture", "return-decode", version)
+    compile_fixture(
+        "ReturnDecodeFixture",
+        "return-decode-paris",
+        version,
+        evm_version="paris",
+        variants=(False,),
+    )
 
 
 def compile_fixture(

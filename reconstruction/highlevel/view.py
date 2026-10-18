@@ -91,6 +91,7 @@ from .passes import (
     unused_call_results,
 )
 from .printer import Printed, expression, print_statements
+from .returndata import recognize_returndata_decodes
 from .summaries import summarize, summary_lines
 from .types import (
     TypedValue,
@@ -476,6 +477,7 @@ def build_decompiled(
     recognitions += recognize_arithmetic_helpers(provisional)
     recognitions += recognize_memory_helpers(provisional)
     recognitions += recognize_string_getters(provisional)
+    recognitions += recognize_returndata_decodes(provisional)
     recognitions += recognize_bytes_returns(provisional)
     # Last presentation step: allocations as values, words as fields (after
     # every memory analysis and idiom recognizer has seen plain MEM accesses).

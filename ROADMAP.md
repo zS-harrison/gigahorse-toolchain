@@ -170,6 +170,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | Memory objects flow through private calls (a struct returned by a helper reads `v1.word0`; `bytes memory` / `uint256[] memory` / `struct(k) memory` parameters and returns), array elements at variable indices (`v1[v2 - 1]`), `keccak256(v)` of a memory string, word arrays returned whole (`returns (uint256[])`, checked by executing the encoder). Held-out raw lines 19,476 -> 18,892 (31.9% -> 31.0%), Router02 25.4% -> 15.5%, ENS controller 14.6% -> 10.4%; returns 728 -> 742 correct, wrong claims still 4. Run-2 raw share 27.9% -> 26.9% (Dedaub 25.7%) | Returned `bytes[]` decoding; encodings with two dynamic values; strings at the folded pointer 0x80; byte reads of `bytes` elements (`MEM[i + p + 32]`) |
 
+### Status update 2026-10-18: dynamic values decoded from returned data
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | `abi.decode(returndata, (T))` for `bytes`, `uint256[]`, `bytes[]` and tuples of them, accepted only when executing the compiled region matches the interpreter's decoder on valid and malformed returned data (17 inputs per type; legacy, via-IR, solc 0.7 variants). 8 of the held-out set's 10 dynamic decodes (ENS multicall, Balancer, CoW, MetaMorpho, V3/V4 managers); scores unchanged, wrong claims 4; code lines 60,901 -> 60,784 | V4 position manager's decodes whose unused parts the analysis removed; a via-IR call whose printed arguments read a later local; static return decodes; encodings with two dynamic values; strings at the folded pointer 0x80 |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

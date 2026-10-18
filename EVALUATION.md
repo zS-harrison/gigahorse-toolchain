@@ -1871,3 +1871,51 @@ the folded pointer 0x80, byte reads of `bytes` elements
 (`bytes1(MEM[i + p + 32])`), and copy loops that walk two pointers
 (`MEM[v5] = MEM[v6]`).
 
+## Dynamic values decoded from returned data
+
+A call returning `bytes`, `uint256[]` or `bytes[]` is followed by solc's
+memory decoder: the returned data copied to the free pointer, the pointer
+moved past it, offset and length checks, an allocation per array and per
+`bytes`, copies and zero words (about 30 lines for the ENS controller's
+multicall result, which Dedaub prints raw too). The compiled statements vary
+(inlined or in helpers, copy loops or MCOPY, Panic or INVALID, a conditional
+zero word in solc 0.7), so `reconstruction/highlevel/returndata.py` does not
+match them statement by statement. A region starting at the
+`RETURNDATACOPY` is replaced by `v = abi.decode(returndata, (T))` (rule
+returndata-decode) only when executing it gives exactly what the
+interpreter's decoder gives: the same memory (with junk around), free
+pointer, results and reverts, on valid encodings of several shapes and on
+malformed ones (short data, offsets and lengths above 2**64 - 1 or past the
+end, element offsets and lengths of `bytes[]`), 17 inputs per type. Tuples of
+up to three values are tried when the region's first size check says so.
+Where the analysis folded the buffer to solc's initial pointer 0x80, the
+decode records that assumption and the interpreter checks it (rule
+assumes-folded-free-pointer). Locals read after the region must be results.
+This is evidence from executions, not a proof that the region equals the
+decoder on every input; the line's note says so and how many inputs ran.
+
+Decoded `bytes` and arrays are memory objects (`v.length`, `v[i]`).
+
+Results (all held-out contracts re-rendered from saved relations, against
+0fb69b3; `results/runs1-2-returndata.json`, `results/run3-returndata.json`,
+`results/run4-returndata.json`):
+
+- 8 of the 10 dynamic returned-data decodes: ENS controller (`bytes[]`, 415
+  -> 388 lines, raw 10.4% -> 8.5% against Dedaub's 18.4%), Balancer
+  (`(uint256[], uint256[])` twice, through a helper), CoW (solc 0.7,
+  `uint256[]`), MetaMorpho (`uint256[]` twice, via-IR), V3 position manager
+  (`bytes` through a 0.7 helper), V4 pool manager (`bytes`). Not replaced: the
+  V4 position manager's two, whose result is unused and whose allocation and
+  copy the analysis already removed as dead (the region is not a whole
+  decoder).
+- Every score count unchanged, wrong claims 4, uncertain lines and
+  unaccounted IR statements unchanged; code lines 60,901 -> 60,784.
+- Run-2 Dedaub comparison: 17,610 / 12,671 code lines, raw share 26.9% /
+  25.7% (`results/run2-dedaub-comparison-returndata.json`).
+
+New fixture `ReturnDecodeFixture` (Cancun legacy, Cancun via-IR, Paris
+legacy): all five decodes print as `abi.decode` in the legacy builds, four in
+via-IR, whose `bytes[]` call prints arguments that read a local the decoder
+assigns later (an existing lifting defect; that function is not executed).
+Each method runs against Py-EVM on the contract's own returns and on every
+malformed sample served by stub contracts. 502 passed, 17 skipped.

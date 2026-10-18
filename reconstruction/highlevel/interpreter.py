@@ -571,10 +571,13 @@ class DecompiledMachine:
         Any malformed input reverts without data, except oversized lengths and
         allocations, which raise Panic(0x41), exactly in the decoder's order.
         """
+        layout = dict(codec.layout)
+        if layout.get("solc") == "returndata-decoder":
+            self.decode_returndata(codec, targets, frame)
+            return
         (source,) = codec.args
         (kind,) = codec.types
         struct = struct_fields(kind)
-        layout = dict(codec.layout)
         if struct is None or len(targets) != 1 or not is_local(targets[0]):
             raise UnsupportedExecution(f"abi.decode to {kind}")
         fields = struct[1]
@@ -628,6 +631,113 @@ class DecompiledMachine:
                     raise _Halt(b"", True)
             self.write(pointer + 32 * index, value.to_bytes(32, "big"))
             frame.values[f"{target}.f{index}"] = value
+
+    def decode_returndata(self, codec: AbiCodec, targets: tuple[Expr, ...], frame: _Frame) -> None:
+        """abi.decode(returndata, (T)) as solc compiles it after a call: the returned
+        data copied to the buffer (the free pointer, or `args[1]`), the pointer moved
+        past it, then solc's memory decoder for T in `bytes`, `uint256[]`, `bytes[]`.
+
+        Malformed data reverts without data; oversized lengths and allocations
+        raise Panic(0x41) (`invalid` in the layout: INVALID, older solc), in the
+        decoder's order. Each `bytes` is followed by a zero word (`pad`
+        "conditional": only when its length is not a multiple of 32).
+        """
+        layout = dict(codec.layout)
+        if len(targets) != len(codec.types) or not all(map(is_local, targets)):
+            raise UnsupportedExecution("abi.decode(returndata): targets and types differ")
+        failure = b"" if layout.get("invalid") else PANIC + (0x41).to_bytes(32, "big")
+        # Older solc copies whole words and zeroes the word after the data only
+        # when the length is not a multiple of 32.
+        conditional_pad = layout.get("pad") == "conditional"
+        data = self.returndata
+        if len(data) > self.max_memory:
+            raise UnsupportedExecution("Returned data too long")
+        buffer = self.eval(codec.args[1], frame) if len(codec.args) > 1 else self.free_pointer()
+        assumed = layout.get("assumed_buffer")
+        if assumed is not None and buffer != assumed:
+            raise ViewMismatch(f"abi.decode(returndata): buffer {buffer:#x}, assumed {assumed:#x}")
+
+        def revert() -> None:
+            raise _Halt(b"", True)
+
+        def word(position: int) -> int:
+            return int.from_bytes(self.read(position, 32), "big")
+
+        def allocate(size: int) -> int:
+            pointer = self.free_pointer()
+            end = (pointer + ((size + 31) & ~31)) & MASK
+            if end > U64 or end < pointer:
+                raise _Halt(failure, True)
+            self.write(0x40, end.to_bytes(32, "big"))
+            return pointer
+
+        def length_at(offset: int, end: int) -> int:
+            if not signed((offset + 31) & MASK) < signed(end):
+                revert()
+            length = word(offset)
+            if length > U64:
+                raise _Halt(failure, True)
+            return length
+
+        def bytes_at(offset: int, end: int) -> int:
+            length = length_at(offset, end)
+            array = allocate(((length + 31) & ~31) + 32)
+            self.write(array, length.to_bytes(32, "big"))
+            source = (offset + 32) & MASK
+            if (source + length) & MASK > end:
+                revert()
+            if length > self.max_memory:
+                raise UnsupportedExecution("Decoded bytes too long")
+            self.write(array + 32, self.read(source, length))
+            if not conditional_pad or length % 32:
+                self.write(array + 32 + length, bytes(32))
+            return array
+
+        def array_at(offset: int, end: int, element) -> int:
+            length = length_at(offset, end)
+            array = allocate(32 * length + 32)
+            self.write(array, length.to_bytes(32, "big"))
+            source = (offset + 32) & MASK
+            if (source + 32 * length) & MASK > end:
+                revert()
+            for index in range(length):
+                value = element(source, (source + 32 * index) & MASK, end)
+                self.write(array + 32 + 32 * index, value.to_bytes(32, "big"))
+            return array
+
+        def word_element(_start: int, head: int, _end: int) -> int:
+            return word(head)
+
+        def bytes_element(start: int, head: int, end: int) -> int:
+            offset = word(head)
+            if offset > U64:
+                revert()
+            return bytes_at((start + offset) & MASK, end)
+
+        self.write(buffer, data)
+        end = (buffer + ((len(data) + 31) & ~31)) & MASK
+        if end > U64 or end < buffer:
+            raise _Halt(PANIC + (0x41).to_bytes(32, "big"), True)
+        self.write(0x40, end.to_bytes(32, "big"))
+        end = (buffer + len(data)) & MASK
+        if signed((end - buffer) & MASK) < 32 * len(codec.types):
+            revert()
+        values = []
+        for index, kind in enumerate(codec.types):
+            offset = word(buffer + 32 * index)
+            if offset > U64:
+                revert()
+            start = (buffer + offset) & MASK
+            if kind == "bytes":
+                values.append(bytes_at(start, end))
+            elif kind == "uint256[]":
+                values.append(array_at(start, end, word_element))
+            elif kind == "bytes[]":
+                values.append(array_at(start, end, bytes_element))
+            else:
+                raise UnsupportedExecution(f"abi.decode(returndata) to {kind}")
+        for target, value in zip(targets, values, strict=True):
+            self.assign(target, value, frame)
 
     def abi_encode(self, codec: AbiCodec, frame: _Frame) -> int:
         """A `bytes memory` encoding at the free pointer; returns its pointer."""

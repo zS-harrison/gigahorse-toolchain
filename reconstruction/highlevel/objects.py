@@ -39,6 +39,7 @@ from .abi_codec import (
     constant_of,
 )
 from .ir import (
+    AbiCodec,
     Allocation,
     Assign,
     Binary,
@@ -646,8 +647,11 @@ def memory_objects(state: FunctionState, public: bool) -> dict[str, ObjectKind]:
     objects: dict[str, _Object] = {}
     scopes: dict[str, list[Stmt]] = {}
     state.body = _find(state.body, Tracker(frozenset()), assignments, objects, scopes, public)
+    decoded = _decoded_objects(state.body, assignments)
+    if decoded:
+        rename_objects(state.body, decoded)
     if not objects:
-        return {}
+        return decoded
     _rename(state.body, objects, {})
     for name, obj in objects.items():
         if obj.constant_base is None:
@@ -667,7 +671,33 @@ def memory_objects(state: FunctionState, public: bool) -> dict[str, ObjectKind]:
     if lengths:
         bases = {name: objects[name].constant_base for name in lengths}
         _hashed_objects(state.body, lengths, bases)
-    return {name: _kind(obj) for name, obj in objects.items()}
+    return decoded | {name: _kind(obj) for name, obj in objects.items()}
+
+
+def _decoded_objects(statements: list[Stmt], assignments: Counter[str]) -> dict[str, ObjectKind]:
+    """Results of abi.decode(returndata, (T)) for T bytes or an array (returndata.py)."""
+    kinds: dict[str, ObjectKind] = {
+        "bytes": ("bytes", None),
+        "uint256[]": ("array", None),
+        "bytes[]": ("array", None),
+    }
+    found: dict[str, ObjectKind] = {}
+    for stmt in iter_statements(statements):
+        if (
+            isinstance(stmt, Assign)
+            and isinstance(stmt.value, AbiCodec)
+            and stmt.value.op == "decode"
+            and dict(stmt.value.layout).get("solc") == "returndata-decoder"
+        ):
+            for target, kind in zip(stmt.targets, stmt.value.types, strict=False):
+                if (
+                    isinstance(target, Var)
+                    and is_local(target)
+                    and assignments[target.name] == 1
+                    and kind in kinds
+                ):
+                    found[target.name] = kinds[kind]
+    return found
 
 
 def _hashed_objects(
