@@ -164,6 +164,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | solc's encoders of calldata `string`/`bytes[]` arguments (calls, events, `keccak256(abi.encode(...))`), hashes of calldata strings, `string.concat`, pre-Cancun copy loops and the free pointer moved past decoded returns are recognized and executed as compiled. ENS registrar controller 581 -> 417 lines, raw share 34.9% -> 14.6% (Dedaub 18.4%); held-out scores unchanged, wrong claims still 4 | Returned `bytes[]` decoding; structs returned by private functions (`MEM[v1]`); encodings with two dynamic values; strings at the folded pointer 0x80 |
 
+### Status update 2026-10-18: memory objects across private calls
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | Memory objects flow through private calls (a struct returned by a helper reads `v1.word0`; `bytes memory` / `uint256[] memory` / `struct(k) memory` parameters and returns), array elements at variable indices (`v1[v2 - 1]`), `keccak256(v)` of a memory string, word arrays returned whole (`returns (uint256[])`, checked by executing the encoder). Held-out raw lines 19,476 -> 18,892 (31.9% -> 31.0%), Router02 25.4% -> 15.5%, ENS controller 14.6% -> 10.4%; returns 728 -> 742 correct, wrong claims still 4. Run-2 raw share 27.9% -> 26.9% (Dedaub 25.7%) | Returned `bytes[]` decoding; encodings with two dynamic values; strings at the folded pointer 0x80; byte reads of `bytes` elements (`MEM[i + p + 32]`) |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

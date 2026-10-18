@@ -34,6 +34,7 @@ from .ir import (
     Comment,
     Const,
     CustomError,
+    Element,
     Emit,
     Env,
     Expr,
@@ -452,6 +453,14 @@ class DecompiledMachine:
                 data = self.read(start + 32, length)
                 padded = data + b"\0" * (-len(data) % 32)
                 raise _Halt((32).to_bytes(32, "big") + length.to_bytes(32, "big") + padded)
+            if "return-memory-array" in stmt.rules:
+                (pointer,) = stmt.values
+                start = self.eval(pointer, frame)
+                length = int.from_bytes(self.read(start, 32), "big")
+                if 32 * length > self.max_memory:
+                    raise UnsupportedExecution("Returned array too long")
+                data = self.read(start + 32, 32 * length)
+                raise _Halt((32).to_bytes(32, "big") + length.to_bytes(32, "big") + data)
             if "storage-string-getter" in stmt.rules:
                 (root,) = stmt.values
                 assert isinstance(root, Var)
@@ -491,6 +500,9 @@ class DecompiledMachine:
             return
         if isinstance(target, Field):
             self.write(self.eval(target.base, frame) + target.offset, value.to_bytes(32, "big"))
+            return
+        if isinstance(target, Element):
+            self.write(self.element(target, frame), value.to_bytes(32, "big"))
             return
         if isinstance(target, Index) and isinstance(target.base, Env):
             if target.base.name == "MEM":
@@ -859,6 +871,10 @@ class DecompiledMachine:
             self.write(staging, data)
             self.write(staging + len(data), bytes(32))
 
+    def element(self, expr: Element, frame: _Frame) -> int:
+        base, index = self.eval(expr.base, frame), self.eval(expr.index, frame)
+        return (base + 32 + 32 * index) & MASK
+
     def memory_bytes(self, value: MemoryBytes, frame: _Frame) -> bytes:
         pointer = self.eval(value.pointer, frame)
         if value.length is not None:
@@ -1163,6 +1179,8 @@ class DecompiledMachine:
             return self.storage.get(slot, 0)
         if isinstance(expr, Field):
             return int.from_bytes(self.read(self.eval(expr.base, frame) + expr.offset, 32), "big")
+        if isinstance(expr, Element):
+            return int.from_bytes(self.read(self.element(expr, frame), 32), "big")
         if isinstance(expr, Member):
             path = _member_path(expr)
             if path is not None and path in frame.values:
@@ -1251,6 +1269,14 @@ class DecompiledMachine:
                 return int.from_bytes(keccak256(self.encode_packed(data, frame)), "big")
             if isinstance(data, AbiCodec) and data.op == "encode":
                 return int.from_bytes(keccak256(self.encode_tuple(data, frame)), "big")
+            if isinstance(data, MemoryBytes):
+                if data.length is not None:
+                    # The length the allocation wrote must still be the length word.
+                    pointer = self.eval(data.pointer, frame)
+                    word = int.from_bytes(self.read(pointer, 32), "big")
+                    if word != self.eval(data.length, frame):
+                        raise UnsupportedExecution("Hashed bytes length word changed")
+                return int.from_bytes(keccak256(self.memory_bytes(data, frame)), "big")
             assert isinstance(data, Slice)
             return int.from_bytes(keccak256(self.slice(data, frame)), "big")
         if name.startswith("packed_bytes_") and len(expr.args) == 1:

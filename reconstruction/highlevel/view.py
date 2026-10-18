@@ -47,7 +47,13 @@ from .memory_forwarding import forward_memory
 from .memory_liveness import AddressModel, FreePointerVersions, Summaries, compute_summaries
 from .naming import Names, load_names, split_signature
 from .numeric import refine_160_bit_returns
-from .objects import memory_objects
+from .objects import (
+    FlowFunction,
+    memory_objects,
+    object_flow,
+    object_type,
+    rename_objects,
+)
 from .parameters import (
     group_struct_parameters,
     lazy_whole_head,
@@ -138,6 +144,12 @@ NARROW_RETURNS = [
     "  comment; the source may declare that type or a wider one holding the value (the bytecode is the same).",
 ]
 NARROW = re.compile(r"u?int(\d+)")
+# Added when a private function passes or returns memory objects (objects.object_flow).
+OBJECT_FLOW = [
+    "Private functions: a parameter or return typed `bytes memory`, `uint256[] memory` or `struct(k) memory`",
+    "  is a pointer to such a memory object: every call passes one there (resp. every return returns one);",
+    "  its words print as fields (rule object-flow).",
+]
 # Added when the dispatcher is a selector table printed as its chain (dispatch.py).
 SELECTOR_TABLE = [
     "Selector table (Vyper 0.3.10+): the dispatcher's chain of `if (msg.sig == ...)` is what executing its",
@@ -176,6 +188,8 @@ class FunctionView:
     rejected_signature: tuple[str, int, int] | None = None
     # Static struct parameters: (name, head-word arguments, struct name, field types).
     parameter_groups: list[tuple[str, list[str], str, list[str]]] = field(default_factory=list)
+    # Positions of returned values that are memory objects (objects.object_flow).
+    returned_objects: dict[int, tuple[str, int | None]] = field(default_factory=dict)
 
 
 def _bits(kind: str) -> int | None:
@@ -287,6 +301,11 @@ def _public_name(selector: str, names: Names) -> tuple[str, str | None]:
     return selector, None
 
 
+# Returns of memory objects recognized by executing their encoders (idioms.py):
+# `bytes` and `string` encode alike, so a returned byte string prints `bytes`.
+ENCODED_RETURN_TYPES = {"return-memory-bytes": "bytes", "return-memory-array": "uint256[]"}
+
+
 def _returns(body: list[Stmt], field_types: dict[str, str] | None = None) -> list[str] | None:
     returns = [
         s for s in iter_statements(body) if isinstance(s, Return) and "tail-call" not in s.rules
@@ -299,7 +318,8 @@ def _returns(body: list[Stmt], field_types: dict[str, str] | None = None) -> lis
     columns = []
     for index in range(arities.pop()):
         types = {
-            (field_types or {}).get(getattr(s.values[index], "name", ""), None)
+            ENCODED_RETURN_TYPES.get(next(iter(s.rules & ENCODED_RETURN_TYPES.keys()), ""))
+            or (field_types or {}).get(getattr(s.values[index], "name", ""), None)
             or expression_type(s.values[index])
             for s in returns
         }
@@ -459,19 +479,32 @@ def build_decompiled(
     recognitions += recognize_bytes_returns(provisional)
     # Last presentation step: allocations as values, words as fields (after
     # every memory analysis and idiom recognizer has seen plain MEM accesses).
+    flow = []
     for view in views:
         view.state.body = view.body
-        memory_objects(view.state, bool(view.function.selectors))
+        objects = memory_objects(view.state, bool(view.function.selectors))
         view.body = view.state.body
+        params = [] if view.arguments_unknown else [a.name for a in view.arguments]
+        flow.append(
+            FlowFunction(view.name, view.body, params, not view.function.selectors, objects)
+        )
+    private_objects(views, flow, closed=not failed)
     refine_160_bit_returns(views)
     storage = name_storage_from_getters(views)
     declarations, field_types = storage_declarations(views, context, storage)
     for view in views:
         view.returns = _returns(view.body, field_types)
+        if view.returns is not None:
+            for position, kind in view.returned_objects.items():
+                view.returns[position] = object_type(kind)
     out = Printed(offsets={s.id: s.original_statements for s in context.statements.values()})
     legend = list(LEGEND)
     if any(v.function.selectors and any(map(_narrow, v.returns or [])) for v in views):
         legend += NARROW_RETURNS
+    if any(
+        v.returned_objects or any(a.type.endswith(" memory") for a in v.arguments) for v in views
+    ):
+        legend += OBJECT_FLOW
     if uses_table(views):
         legend += SELECTOR_TABLE
     for line in legend:
@@ -550,6 +583,31 @@ def build_decompiled(
         "unaccounted_ir_statements": sorted(set(context.statements) - accounted),
     }
     return DecompiledProgram(context, views, storage, out.text(), mapping)
+
+
+def private_objects(views: list[FunctionView], flow: list[FlowFunction], closed: bool) -> None:
+    """Memory objects across private calls: results and parameters print fields."""
+    before = {f.name: set(f.objects) for f in flow}
+    # An unresolved private call may reach any function: parameters stay words.
+    closed = closed and not any(
+        isinstance(node, Call) and node.name == "private_call_unresolved"
+        for f in flow
+        for stmt in iter_statements(f.body)
+        for expr in stmt.expressions()
+        for node in iter_expr(expr)
+    )
+    returned, parameters = object_flow(flow, closed)
+    for view, function in zip(views, flow, strict=True):
+        learned = {n: k for n, k in function.objects.items() if n not in before[function.name]}
+        if learned:
+            rename_objects(view.body, learned)
+        view.returned_objects = returned.get(view.name, {})
+        for position, kind in parameters.get(view.name, {}).items():
+            argument = view.arguments[position]
+            argument.type = object_type(kind)
+            argument.reason = (
+                "every call passes a pointer to a memory object of this kind (rule object-flow)"
+            )
 
 
 def classify_unprinted(context: ProgramContext, accounted: set[str]) -> dict[str, set[str]]:

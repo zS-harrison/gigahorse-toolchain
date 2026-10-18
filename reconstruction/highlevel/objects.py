@@ -45,6 +45,7 @@ from .ir import (
     Call,
     Comment,
     Const,
+    Element,
     Emit,
     Env,
     Expr,
@@ -66,7 +67,14 @@ from .ir import (
     annotate,
     is_local,
 )
-from .passes import FunctionState, has_effect, iter_statements, statement_ids, substitute
+from .passes import (
+    FunctionState,
+    has_effect,
+    iter_expr,
+    iter_statements,
+    statement_ids,
+    substitute,
+)
 from .types import map_expr
 
 INITIAL_POINTER = 0x80  # solc's free pointer before any allocation
@@ -88,7 +96,7 @@ class _Object:
 
 def _reads_memory(expr: Expr) -> bool:
     for node in _walk(expr):
-        if isinstance(node, (Field, Slice, MemoryBytes)):
+        if isinstance(node, (Field, Element, Slice, MemoryBytes)):
             return True
         if (
             isinstance(node, Index)
@@ -158,10 +166,10 @@ def _keeps_pointer(stmt: Stmt) -> bool:
 
 
 def _array_forms(length: Expr) -> list[Expr]:
-    """solc's array allocation sizes: length * 32 + 32."""
-    return [
-        Binary("+", Binary("*", length, Const(32)), Const(32)),
-        Binary("+", Binary("<<", length, Const(5)), Const(32)),
+    """solc's array allocation sizes: length * 32 + 32 (via-IR: rounded up, the same)."""
+    words = [Binary("*", length, Const(32)), Binary("<<", length, Const(5))]
+    return [Binary("+", w, Const(32)) for w in words] + [
+        Binary("&", Binary("+", w, Const(63)), Const(NOT31)) for w in words
     ]
 
 
@@ -433,6 +441,47 @@ def _relative(key: Expr) -> tuple[str, int] | None:
     return None
 
 
+def _terms(expr: Expr) -> list[Expr]:
+    if isinstance(expr, Binary) and expr.op == "+":
+        return _terms(expr.left) + _terms(expr.right)
+    return [expr]
+
+
+def _words(expr: Expr) -> Expr | None:
+    """X for X * 32, 32 * X or X << 5."""
+    if isinstance(expr, Binary) and isinstance(expr.right, Const):
+        if (expr.op == "*" and expr.right.value == 32) or (
+            expr.op == "<<" and expr.right.value == 5
+        ):
+            return expr.left
+    if isinstance(expr, Binary) and expr.op == "*" and isinstance(expr.left, Const):
+        return expr.right if expr.left.value == 32 else None
+    return None
+
+
+def _element(key: Expr, objects: dict[str, _Object], evidence) -> Element | None:
+    """MEM[p + 32 * X + 32 * (k + 1)] -> p[X + k] for a memory array p (k >= 0)."""
+    terms = _terms(key)
+    arrays = [
+        t
+        for t in terms
+        if isinstance(t, Var) and is_local(t) and t.name in objects
+        if objects[t.name].kind == "array"
+    ]
+    if len(arrays) != 1:
+        return None
+    rest = list(terms)
+    rest.remove(arrays[0])
+    constant = sum(t.value for t in rest if isinstance(t, Const))
+    scaled = [t for t in rest if not isinstance(t, Const)]
+    index = _words(scaled[0]) if len(scaled) == 1 else None
+    if index is None or constant < 32 or constant % 32 or constant >= 1 << 64:
+        return None
+    if constant > 32:
+        index = Binary("+", index, Const(constant // 32 - 1))
+    return Element(Var(arrays[0].name, None), index, evidence=evidence)
+
+
 def _map_statement(stmt: Stmt, fn) -> None:
     """Rewrite a statement's own expressions (not nested bodies); locals stay bound."""
     if isinstance(stmt, Assign):
@@ -471,6 +520,9 @@ def _rename(statements: list[Stmt], objects: dict[str, _Object], constants: dict
             obj = objects[relative[0]]
             field = _field(obj, relative[1], expr.all_evidence())
             return field if field is not None else expr
+        element = _element(expr.key, objects, expr.all_evidence())
+        if element is not None:
+            return element
         if isinstance(expr.key, Const) and expr.key.value in constants:
             obj, offset = constants[expr.key.value]
             field = _field(obj, offset, expr.all_evidence())
@@ -578,19 +630,24 @@ def _relabel_lengths(statements: list[Stmt], names: set[str]) -> None:
         _map_statement(stmt, fn)
 
 
-def memory_objects(state: FunctionState, public: bool) -> None:
-    assignments: Counter[str] = Counter(
+def _assignments(statements: list[Stmt]) -> Counter[str]:
+    return Counter(
         target.name
-        for stmt in iter_statements(state.body)
+        for stmt in iter_statements(statements)
         if isinstance(stmt, (Assign, ParallelAssign))
         for target in stmt.targets
         if is_local(target)
     )
+
+
+def memory_objects(state: FunctionState, public: bool) -> dict[str, ObjectKind]:
+    """Allocations as values, words as fields; returns each object's kind."""
+    assignments = _assignments(state.body)
     objects: dict[str, _Object] = {}
     scopes: dict[str, list[Stmt]] = {}
     state.body = _find(state.body, Tracker(frozenset()), assignments, objects, scopes, public)
     if not objects:
-        return
+        return {}
     _rename(state.body, objects, {})
     for name, obj in objects.items():
         if obj.constant_base is None:
@@ -602,3 +659,230 @@ def memory_objects(state: FunctionState, public: bool) -> None:
     constants = {name for name, obj in objects.items() if obj.kind == "bytes-literal"}
     if constants:
         _relabel_lengths(state.body, constants)
+    lengths = {
+        name: obj.statement.value.length if isinstance(obj.statement.value, Allocation) else None
+        for name, obj in objects.items()
+        if obj.kind in {"bytes", "bytes-literal"}
+    }
+    if lengths:
+        bases = {name: objects[name].constant_base for name in lengths}
+        _hashed_objects(state.body, lengths, bases)
+    return {name: _kind(obj) for name, obj in objects.items()}
+
+
+def _hashed_objects(
+    statements: list[Stmt],
+    lengths: dict[str, Expr | None],
+    bases: dict[str, int | None] | None = None,
+) -> None:
+    """keccak256(MEM[p + 32:p + 32 + n]) -> keccak256(p) for a bytes object p
+    whose length is n: p.length, or the length the allocation wrote (the
+    interpreter checks that it is still the length word when executed). For an
+    object at a constant address A, MEM[A + 32:A + 32 + p.length] (p.length is
+    printed only where the allocation dominates)."""
+
+    def atoms(expr: Expr) -> Expr:
+        def fn(node: Expr) -> Expr:
+            if isinstance(node, Field) and node.offset == 0 and isinstance(node.base, Var):
+                return Var(f"{node.base.name}.length")
+            return node
+
+        return map_expr(expr, fn)
+
+    def fn(expr: Expr) -> Expr:
+        if not (
+            isinstance(expr, Call)
+            and expr.name == "keccak256"
+            and len(expr.args) == 1
+            and isinstance(expr.args[0], Slice)
+            and expr.args[0].space == "MEM"
+        ):
+            return expr
+        data = expr.args[0]
+        t = Tracker(frozenset())
+        start = t.canon(atoms(data.start))
+        size = add(t.canon(atoms(data.end)), start, -1)
+        for name, length in lengths.items():
+            constant = (bases or {}).get(name)
+            at_constant = constant is not None and start == ("const", constant + 32)
+            if start != add(("var", name), ("const", 32)) and not at_constant:
+                continue
+            if size == t.canon(Var(f"{name}.length")):
+                known = None
+            elif length is not None and not at_constant and size == t.canon(atoms(length)):
+                known = length
+            else:
+                continue
+            value = MemoryBytes(Var(name, None), known, evidence=data.all_evidence())
+            return Call("keccak256", (value,), evidence=expr.evidence, rules=expr.rules)
+        return expr
+
+    for stmt in iter_statements(statements):
+        _map_statement(stmt, fn)
+
+
+# (kind, size): ("struct", bytes) or ("bytes", None) / ("array", None).
+ObjectKind = tuple[str, int | None]
+
+
+def _kind(obj: _Object) -> ObjectKind:
+    return ("bytes", None) if obj.kind == "bytes-literal" else (obj.kind, obj.size)
+
+
+def object_type(kind: ObjectKind) -> str:
+    """The printed type of a pointer to a memory object of this kind."""
+    if kind[0] == "struct":
+        assert kind[1] is not None
+        return f"struct({kind[1] // 32}) memory"
+    return "bytes memory" if kind[0] == "bytes" else "uint256[] memory"
+
+
+@dataclass
+class FlowFunction:
+    """A function as seen by object_flow: `objects` are its locals known to
+    hold pointers to memory objects (from memory_objects), updated in place."""
+
+    name: str
+    body: list[Stmt]
+    params: list[str]
+    private: bool
+    objects: dict[str, ObjectKind]
+
+
+def _private_returns(function: FlowFunction) -> dict[int, ObjectKind]:
+    returns = [
+        s
+        for s in iter_statements(function.body)
+        if isinstance(s, Return) and "tail-call" not in s.rules
+    ]
+    if not returns or any(s.raw is not None for s in returns):
+        return {}
+    if len({len(s.values) for s in returns}) != 1:
+        return {}
+    result = {}
+    for position in range(len(returns[0].values)):
+        kinds = {
+            function.objects.get(value.name) if is_local(value) else None
+            for value in (s.values[position] for s in returns)
+        }
+        if len(kinds) == 1 and None not in kinds:
+            result[position] = kinds.pop()  # type: ignore[assignment]
+    return result
+
+
+def object_flow(
+    functions: list[FlowFunction], closed: bool
+) -> tuple[dict[str, dict[int, ObjectKind]], dict[str, dict[int, ObjectKind]]]:
+    """Memory objects passed to and returned from private functions.
+
+    A private function returns an object when every return statement returns,
+    at that position, a local holding one kind of object; its callers' results
+    there are then that object. A parameter is an object when every call of
+    the function passes one kind of object there (only when `closed`: every
+    call site is visible, no function failed and no callee is unresolved).
+    Iterated to a fixpoint; words then print as fields, exactly as MEM reads.
+    Returns (returned objects, parameter objects) by function name and position.
+    """
+    by_name = {f.name: f for f in functions}
+    assignments = {f.name: _assignments(f.body) for f in functions}
+    # Locals defined only as copies of other locals (merges): an object when
+    # every copied local holds one kind of object (a self-copy keeps it).
+    copies: dict[str, dict[str, list[str]]] = {}
+    for function in functions:
+        found: dict[str, list[str | None]] = {}
+        for stmt in iter_statements(function.body):
+            if isinstance(stmt, Assign) and len(stmt.targets) == 1:
+                pairs = [(stmt.targets[0], stmt.value)]
+            elif isinstance(stmt, ParallelAssign):
+                pairs = list(zip(stmt.targets, stmt.values, strict=False))
+            else:
+                continue
+            for target, value in pairs:
+                if isinstance(target, Var) and is_local(target):
+                    source = value.name if isinstance(value, Var) and is_local(value) else None
+                    found.setdefault(target.name, []).append(source)
+        copies[function.name] = {
+            name: [v for v in sources if v is not None]
+            for name, sources in found.items()
+            if len(sources) == assignments[function.name][name] and None not in sources
+        }
+    calls: dict[str, list[tuple[FlowFunction, Call, tuple[Expr, ...]]]] = {}
+    for function in functions:
+        for stmt in iter_statements(function.body):
+            targets = stmt.targets if isinstance(stmt, Assign) else ()
+            for expr in stmt.expressions():
+                for node in iter_expr(expr):
+                    if isinstance(node, Call) and node.name in by_name:
+                        direct = isinstance(stmt, Assign) and stmt.value is node
+                        calls.setdefault(node.name, []).append(
+                            (function, node, targets if direct else ())
+                        )
+    returned: dict[str, dict[int, ObjectKind]] = {}
+    parameters: dict[str, dict[int, ObjectKind]] = {}
+    changed = True
+    while changed:
+        changed = False
+
+        def learn(function: FlowFunction, name: str, kind: ObjectKind) -> None:
+            nonlocal changed
+            if name not in function.objects:
+                function.objects[name] = kind
+                changed = True
+
+        for function in functions:
+            for name, values in copies[function.name].items():
+                kinds = {function.objects.get(v) for v in values if v != name}
+                kind = kinds.pop() if len(kinds) == 1 else None
+                if kind is not None:
+                    learn(function, name, kind)
+        for function in functions:
+            if not function.private:
+                continue
+            found = _private_returns(function)
+            returned[function.name] = found
+            for caller, _, targets in calls.get(function.name, []):
+                for position, kind in found.items():
+                    if position < len(targets):
+                        target = targets[position]
+                        if (
+                            isinstance(target, Var)
+                            and is_local(target)
+                            and assignments[caller.name][target.name] == 1
+                        ):
+                            learn(caller, target.name, kind)
+            if not closed:
+                continue
+            sites = calls.get(function.name, [])
+            if not sites:
+                continue
+            for position, param in enumerate(function.params):
+                if assignments[function.name][param]:
+                    continue
+                kinds = set()
+                for caller, call, _ in sites:
+                    arg = call.args[position] if len(call.args) == len(function.params) else None
+                    kinds.add(
+                        caller.objects.get(arg.name)
+                        if isinstance(arg, Var) and is_local(arg)
+                        else None
+                    )
+                if len(kinds) == 1 and None not in kinds:
+                    kind = kinds.pop()
+                    learn(function, param, kind)
+                    parameters.setdefault(function.name, {})[position] = kind
+    return returned, parameters
+
+
+def rename_objects(statements: list[Stmt], objects: dict[str, ObjectKind]) -> None:
+    """MEM[p + c] -> p.wordN / p.length for locals p known to hold objects."""
+    _rename(
+        statements,
+        {
+            name: _Object(name, kind, size, None, None)  # type: ignore[arg-type]
+            for name, (kind, size) in objects.items()
+        },
+        {},
+    )
+    lengths = {name: None for name, (kind, _) in objects.items() if kind == "bytes"}
+    if lengths:
+        _hashed_objects(statements, lengths)

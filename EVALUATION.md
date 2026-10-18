@@ -1801,3 +1801,73 @@ function exposed. 485 passed, 17 skipped; cross-check 1,079 agreeing.
 Not recognized yet: a `string memory` argument at the folded pointer 0x80
 (the copy's source is the constant 160, as in the fixture's `priceOf`), more
 than one dynamic value in one encoding, and decoding returned `bytes[]`.
+
+## Memory objects across private calls
+
+Memory objects (`new struct(k)`, `new bytes(n)`, `new uint256[](n)`, copies of
+calldata) were recognized one function at a time, so a struct returned by a
+private function was read raw by its callers (`_SafeAdd(MEM[v1], MEM[v1 + 32])`
+in the ENS controller), and a helper taking a `bytes` or array printed
+`MEM[varg0]`. Now (`objects.object_flow`, rule object-flow), iterated to a
+fixpoint over all functions:
+
+- A private function returns an object at a position when every return there
+  returns a local holding one kind of object; its callers' results are then
+  that object (`v6 = _SafeAdd(v1.word0, v1.word1)`), and the return prints
+  `returns (struct(2) memory)`.
+- A private parameter is an object when every call passes one kind of object
+  there. Only when every call site is visible: no failed view and no
+  unresolved private call, otherwise parameters stay words.
+- A local defined only as copies of objects of one kind (a merge of two
+  allocations in via-IR's branches) is that object.
+- Words of a memory array at a variable index print as elements:
+  `MEM[v * 32 + 32 + p]` -> `p[v]` (new IR node `Element`, which reads and
+  writes exactly the word at `p + 32 + 32 * index`).
+- `keccak256(MEM[p + 32:p + 32 + p.length])` of a bytes object prints
+  `keccak256(p)`; where the length is the expression its allocation wrote,
+  the interpreter checks that the length word still holds it.
+- via-IR's array allocation size `((n << 5) + 63) & ~31` is recognized.
+- A public function returning a memory array of words prints `return v;` with
+  `returns (uint256[])`, accepted only after executing the encoding tail on
+  five lengths with junk memory around the array (as for returned bytes).
+
+Printing fields renames reads and writes only; the kind of object is a claim
+(the legend line added when it is used says what it means). Also fixed: a
+recognized bytes return (`return v; // returns the bytes/string object`)
+printed `returns (uint256)` in its header, because the header was recomputed
+from the returned local; it now prints `returns (bytes)`. It used to say
+`string` where it was recognized. `bytes` and `string` encode alike, so the
+held-out scorer now counts a printed `bytes` against an ABI `string` as
+unresolved (as `uint256` is for a word), and a printed `uint256[]` against an
+array of one-word elements likewise. With `string`, 6 of 12 such returns
+would have been wrong claims (ABI `bytes`).
+
+Results, all held-out contracts re-rendered from their saved relations, base
+(659cf5f) and new scored by the same scorer
+(`results/runs1-2-object-flow.json`, `results/run3-object-flow.json`,
+`results/run4-object-flow.json`):
+
+- Raw lines (compare-dedaub.py's rule) 19,476 -> 18,892, raw share 31.9% ->
+  31.0%; code lines 61,020 -> 60,901. Router02 25.4% -> 15.5% (1,211 -> 1,139
+  lines), ENS controller 14.6% -> 10.4%, Compound cETH 6.4% -> 4.2%, Seaport
+  46.7% -> 44.3%, Balancer 32.3% -> 31.0%.
+- Returns 728 -> 742 correct (Router02's eight `uint256[]` returns, SwapRouter02,
+  CoW, EVC, V4 pool manager); names, argument types, uncertain lines and
+  unaccounted IR statements unchanged; wrong claims 4 -> 4.
+- Dedaub comparison on the seven run-2 contracts (calibration,
+  `results/run2-dedaub-comparison-object-flow.json`): 17,637 / 12,671 code
+  lines, raw share 26.9% / 25.7% (was 17,651 lines, 27.9%). ENS controller
+  415 lines, 10.4% raw, against Dedaub's 512 and 18.4%.
+
+New fixture `ObjectFlowFixture` (optimized and via-IR): a struct returned by a
+helper, `bytes` and `uint256[]` parameters, an array built by a helper and
+returned whole; the printed forms run against Py-EVM in both builds (122
+calls each, Panic reverts included). Router02's execution test now also checks
+its array helpers and returns. 493 passed, 17 skipped.
+
+Not recognized yet: decoding returned `bytes[]` (the ENS controller's
+multicall result), encodings with two dynamic values, a `string memory` at
+the folded pointer 0x80, byte reads of `bytes` elements
+(`bytes1(MEM[i + p + 32])`), and copy loops that walk two pointers
+(`MEM[v5] = MEM[v6]`).
+

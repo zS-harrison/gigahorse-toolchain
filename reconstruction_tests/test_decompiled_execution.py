@@ -8,6 +8,7 @@ validation with synthetic storage, not an equivalence proof.
 """
 
 import hashlib
+import re
 
 import pytest
 
@@ -415,6 +416,14 @@ def test_router02_pair_addresses_and_swaps_match_evm(tmp_path, monkeypatch, reco
         'keccak256(abi.encodePacked(hex"ff", address(0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f)'
         in text
     )
+    # getAmountsOut/In build the amounts array in helpers (uint256[] memory, read by
+    # element) and return it whole; the swaps read its last element.
+    assert (
+        "function getAmountsIn(uint256 varg0, address[] varg1) public nonpayable returns (uint256[])"
+        in text
+    )
+    assert "uint256[] memory varg" in text and "private returns (uint256[] memory)" in text
+    assert re.search(r"require\(v\d+\[v\d+ - 1\] >= varg1, Error\(\"UniswapV2Router: INSUFF", text)
     token_a, token_b, token_c, token_d = 0x1000, 0x2000, 0x3000, 0x4000
     pairs = {
         pair_for(token_a, token_b): words(10**21, 4 * 10**21, 1),

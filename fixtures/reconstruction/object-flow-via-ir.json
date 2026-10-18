@@ -1,0 +1,214 @@
+{
+  "compiler": "solc, the solidity compiler commandline interface\nVersion: 0.8.30+commit.73712a01.Linux.g++",
+  "source": "ObjectFlowFixture.sol",
+  "source_sha256": "1d6197aa0947c30eb6f6c250d4030a4afa02cdf26b2ea9a6d830b3b556484002",
+  "bytecode_sha256": "19807a8c4b926d231cf674e1c0a0767837232e854dc320c9274a6ef60d498235",
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "evmVersion": "cancun",
+    "metadata": {
+      "bytecodeHash": "none",
+      "appendCBOR": false
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "evm.deployedBytecode.object",
+          "evm.bytecode.object",
+          "evm.methodIdentifiers",
+          "storageLayout",
+          "abi"
+        ]
+      }
+    }
+  },
+  "method_identifiers": {
+    "cost(string,uint256)": "7459d664",
+    "expiries(bytes32)": "3f5d76b3",
+    "mix(uint256[],uint256,uint256)": "81b29fa4",
+    "register(string,uint256)": "ea87152b",
+    "rentPrice(string,uint256)": "83e7f6ff",
+    "scaled(uint256[],uint256)": "62d823ce"
+  },
+  "storage_layout": {
+    "storage": [
+      {
+        "astId": 11,
+        "contract": "ObjectFlowFixture.sol:ObjectFlowFixture",
+        "label": "expiries",
+        "offset": 0,
+        "slot": "0",
+        "type": "t_mapping(t_bytes32,t_uint256)"
+      }
+    ],
+    "types": {
+      "t_bytes32": {
+        "encoding": "inplace",
+        "label": "bytes32",
+        "numberOfBytes": "32"
+      },
+      "t_mapping(t_bytes32,t_uint256)": {
+        "encoding": "mapping",
+        "key": "t_bytes32",
+        "label": "mapping(bytes32 => uint256)",
+        "numberOfBytes": "32",
+        "value": "t_uint256"
+      },
+      "t_uint256": {
+        "encoding": "inplace",
+        "label": "uint256",
+        "numberOfBytes": "32"
+      }
+    }
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "duration",
+          "type": "uint256"
+        }
+      ],
+      "name": "cost",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "expiries",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "values",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "factor",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "skip",
+          "type": "uint256"
+        }
+      ],
+      "name": "mix",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "duration",
+          "type": "uint256"
+        }
+      ],
+      "name": "register",
+      "outputs": [],
+      "stateMutability": "payable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "duration",
+          "type": "uint256"
+        }
+      ],
+      "name": "rentPrice",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "values",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "factor",
+          "type": "uint256"
+        }
+      ],
+      "name": "scaled",
+      "outputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "",
+          "type": "uint256[]"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    }
+  ],
+  "creation_bytecode": "60808060405234601557610690908161001a8239f35b5f80fdfe6080806040526004361015610012575f80fd5b5f3560e01c9081633f5d76b3146103045750806362d823ce1461027c5780637459d6641461023957806381b29fa41461013357806383e7f6ff146100fc5763ea87152b1461005e575f80fd5b6100673661035a565b916100a861008f6100828561007d368787610468565b610554565b60208151910151906104a9565b6100a261009d368686610468565b6105f3565b906104a9565b34106100cf576100b9913691610468565b602081519101205f525f60205260405f20555f80f35b60405162461bcd60e51b8152602060048201526005602482015264707269636560d81b6044820152606490fd5b3461012f57604061011c61007d6101123661035a565b9291903691610468565b6020815191015182519182526020820152f35b5f80fd5b3461012f57606036600319011261012f5760043567ffffffffffffffff811161012f57610164903690600401610329565b9061017b602435610176368585610421565b6104de565b604435925f5b600185018086116102255783518110156101c5576101bf916101a66101b992866104b6565b516101b188876104b6565b5118906104a9565b946105e5565b93610181565b506101d1368386610421565b905f805b600182018083116102255784518110156102115761020b916101fa61020592876104b6565b516101b185886104b6565b916105e5565b906101d5565b602061021d83866104a9565b604051908152f35b634e487b7160e01b5f52601160045260245ffd5b3461012f57602061021d6102746100a261009d6102686102583661035a565b61007d9692939196368886610468565b878151910151906104a9565b933691610468565b3461012f57604036600319011261012f5760043567ffffffffffffffff811161012f576101766102b36102c0923690600401610329565b9190602435923691610421565b6040518091602082016020835281518091526020604084019201905f5b8181106102eb575050500390f35b82518452859450602093840193909201916001016102dd565b3461012f57602036600319011261012f576020906004355f525f825260405f20548152f35b9181601f8401121561012f5782359167ffffffffffffffff831161012f576020808501948460051b01011161012f57565b90604060031983011261012f5760043567ffffffffffffffff811161012f578260238201121561012f5780600401359267ffffffffffffffff841161012f576024848301011161012f57602401919060243590565b604051906040820182811067ffffffffffffffff8211176103cf57604052565b634e487b7160e01b5f52604160045260245ffd5b6040519190601f01601f1916820167ffffffffffffffff8111838210176103cf57604052565b67ffffffffffffffff81116103cf5760051b60200190565b92919061043561043082610409565b6103e3565b93818552602085019160051b810192831161012f57905b82821061045857505050565b813581526020918201910161044c565b92919267ffffffffffffffff82116103cf5761048d601f8301601f19166020016103e3565b938285528282011161012f57815f926020928387013784010152565b9190820180921161022557565b80518210156104ca5760209160051b010190565b634e487b7160e01b5f52603260045260245ffd5b9190918051906104f061043083610409565b91808352610500601f1991610409565b01366020840137815f5b825181101561054d5761051d81846104b6565b5190868202918083048814901517156102255761053c816001936104a9565b61054682876104b6565b520161050a565b5093505050565b61055c6103af565b5f81525f602082015250805160208201205f525f60205260405f2054908282115f146105b25750600382029180830460031481151715610225578103908111610225576105a76103af565b918252602082015290565b91600580820292508115918304141715610225576105d19151906104a9565b6105d96103af565b9081525f602082015290565b5f1981146102255760010190565b905f915f5b815181101561068c5760ff60f81b6020828401015116606160f81b811490811561067e575b8115610670575b8115610662575b8115610654575b50610640575b6001016105f8565b9261064c6001916105e5565b939050610638565b607560f81b1490505f610632565b606f60f81b8114915061062b565b606960f81b81149150610624565b606560f81b8114915061061d565b505056"
+}

@@ -363,6 +363,23 @@ class Field(Expr):
         return replace(self, base=children[0])
 
 
+@dataclass(frozen=True)
+class Element(Expr):
+    """Element `index` of a memory array object: the word at base + 32 + 32 * index.
+
+    Printed `base[index]`; it reads and writes exactly that word (mod 2**256).
+    """
+
+    base: Expr
+    index: Expr
+
+    def children(self) -> tuple[Expr, ...]:
+        return (self.base, self.index)
+
+    def with_children(self, children: tuple[Expr, ...]) -> Expr:
+        return replace(self, base=children[0], index=children[1])
+
+
 def struct_fields(type_name: str) -> tuple[str, list[str]] | None:
     """`S0(uint256,bytes)` -> ("S0", ["uint256", "bytes"]); None for other types."""
     if not type_name.endswith(")") or "(" not in type_name:

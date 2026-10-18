@@ -27,6 +27,7 @@ def main():
         ("DecoderFixture", "decoder"),
         ("SwitchFixture", "switch"),
         ("InliningFixture", "inlining"),
+        ("ObjectFlowFixture", "object-flow"),
     ):
         compile_fixture(contract, prefix, version)
     # Before Cancun, solc copies memory with a word loop instead of MCOPY. Legacy

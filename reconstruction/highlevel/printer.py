@@ -15,6 +15,7 @@ from .ir import (
     Comment,
     Const,
     CustomError,
+    Element,
     Emit,
     Env,
     Expr,
@@ -157,6 +158,8 @@ def _expr(expr: Expr, context: int) -> str:
         return _codec(expr)
     if isinstance(expr, (MemoryBytes, CalldataArg)):
         return _expr(expr.pointer, context)
+    if isinstance(expr, Element):
+        return f"{_postfix(expr.base)}[{_expr(expr.index, 0)}]"
     if isinstance(expr, Field):
         if expr.label.startswith("["):
             return f"{_postfix(expr.base)}{expr.label}"

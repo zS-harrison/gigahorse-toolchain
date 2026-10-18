@@ -119,6 +119,14 @@ def flat_words(kind: str) -> list[str] | None:
     return [kind]
 
 
+def word_array(kind: str) -> bool:
+    """T[] with T one static word: `uint256[]` (an array of raw words) is its
+    unresolved default, as `uint256` is for a word (and `bytes` for a `string`,
+    which encodes alike)."""
+    element = kind[:-2] if kind.endswith("[]") else None
+    return element is not None and flat_words(element) is not None and len(flat_words(element)) == 1
+
+
 def compare_tuple(mine: str, theirs: str) -> str:
     """A printed struct parameter against the ABI type, word by word: a uint256
     word is the raw default (unresolved); a different word count is wrong."""
@@ -206,7 +214,10 @@ def score(view: dict[str, dict], truth: dict[str, dict]) -> dict:
         if ours["returns"] is None:
             counts["returns"]["unresolved" if expected["outputs"] else "correct"] += 1
         elif len(ours["returns"]) == len(expected["outputs"]) and all(
-            a == b or a == "uint256"
+            a == b
+            or a == "uint256"
+            or (a == "uint256[]" and word_array(b))
+            or (a == "bytes" and b == "string")
             for a, b in zip(ours["returns"], expected["outputs"], strict=True)
         ):
             exact = all(a == b for a, b in zip(ours["returns"], expected["outputs"], strict=True))

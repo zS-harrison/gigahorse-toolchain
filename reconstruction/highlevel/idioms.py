@@ -410,6 +410,7 @@ def recognize_memory_helpers(decompiled) -> list[Recognition]:
 
 
 BYTES_LENGTHS = (0, 1, 31, 32, 33, 64, 100)
+ARRAY_LENGTHS = (0, 1, 2, 3, 7)
 
 
 def _free_locals(statements: list[Stmt]) -> set[str]:
@@ -429,14 +430,41 @@ def _free_locals(statements: list[Stmt]) -> set[str]:
     return read - assigned
 
 
+def _array_words(length: int) -> bytes:
+    return b"".join(((i * 0x1F3 + length) * 0x10001).to_bytes(32, "big") for i in range(length))
+
+
+# What a tail may return for a memory object at P: (rule, printed type, lengths,
+# the object's bytes after its length word, the ABI encoding of the object).
+ENCODED_RETURNS = (
+    (
+        "return-memory-bytes",
+        "bytes",
+        BYTES_LENGTHS,
+        lambda n: sample(n, 77),
+        lambda n, data: abi_bytes(data),
+        "the bytes/string object",
+    ),
+    (
+        "return-memory-array",
+        "uint256[]",
+        ARRAY_LENGTHS,
+        _array_words,
+        lambda n, data: (32).to_bytes(32, "big") + n.to_bytes(32, "big") + data,
+        "the array of words",
+    ),
+)
+
+
 def recognize_bytes_returns(decompiled) -> list[Recognition]:
-    """Summarize `<encode memory bytes at P>; return MEM[..]` tails as `return P;`.
+    """Summarize `<encode memory bytes at P>; return MEM[..]` tails as `return P;`
+    (likewise a memory array of words).
 
     The candidate tail is the shortest suffix of a function's top-level body,
     starting at a free-pointer read, whose only free local is P and which ends in
     a raw RETURN with no other effects. It is accepted only if executing the
-    tail with a bytes object at P returns exactly abi.encode(bytes) for several
-    lengths (memory around the object is filled with junk).
+    tail with a bytes object (resp. a word array) at P returns exactly its ABI
+    encoding for several lengths (memory around the object is filled with junk).
     """
     from .interpreter import DecompiledMachine, _Frame, _Halt
     from .passes import is_free_pointer_read
@@ -463,38 +491,43 @@ def recognize_bytes_returns(decompiled) -> list[Recognition]:
                 continue
             pointer = next(iter(free))
             machine = DecompiledMachine(decompiled)
-            checked = 0
-            try:
-                for length in BYTES_LENGTHS:
-                    data = sample(length, 77)
-                    memory = bytearray((i * 13 + 5) % 256 for i in range(0x600))
-                    memory[0x40:0x60] = (0x400).to_bytes(32, "big")
-                    memory[0x100:0x120] = length.to_bytes(32, "big")
-                    memory[0x120 : 0x120 + length] = data
-                    machine.prepare_fragment(memory)
-                    try:
-                        machine.block(tail, _Frame({pointer: 0x100}))
-                        break  # fell through without returning
-                    except _Halt as halt:
-                        if halt.reverted or halt.data != abi_bytes(data):
-                            break
-                    checked += 1
-            except UnsupportedExecution:
+            for rule, printed, lengths, contents, encoded, what in ENCODED_RETURNS:
                 checked = 0
-            if checked == len(BYTES_LENGTHS):
+                try:
+                    for length in lengths:
+                        data = contents(length)
+                        memory = bytearray((i * 13 + 5) % 256 for i in range(0x600))
+                        memory[0x40:0x60] = (0x400).to_bytes(32, "big")
+                        memory[0x100:0x120] = length.to_bytes(32, "big")
+                        memory[0x120 : 0x120 + len(data)] = data
+                        machine.prepare_fragment(memory)
+                        try:
+                            machine.block(tail, _Frame({pointer: 0x100}))
+                            break  # fell through without returning
+                        except _Halt as halt:
+                            if halt.reverted or halt.data != encoded(length, data):
+                                break
+                        checked += 1
+                except UnsupportedExecution:
+                    checked = 0
+                if checked != len(lengths):
+                    continue
                 hidden = frozenset().union(*(statement_ids(s) for s in iter_statements(tail)))
                 view.body[start:] = [
                     Return(
                         (Var(pointer, f"bytes-return:{pointer}"),),
                         hidden=hidden,
-                        rules=frozenset({"return-memory-bytes"}),
-                        note="returns the bytes/string object at this pointer (ABI-encoded); "
+                        rules=frozenset({rule}),
+                        note=f"returns {what} at this pointer (ABI-encoded); "
                         f"checked by executing the encoder on {checked} lengths",
                         origin=body[-1].origin,
                     )
                 ]
                 view.state.body = view.body
-                view.returns = ["string"]
-                results.append(Recognition(view.name, "return-memory-bytes", checked, pointer))
+                view.returns = [printed]
+                results.append(Recognition(view.name, rule, checked, pointer))
                 break
+            else:
+                continue
+            break
     return results
