@@ -1919,3 +1919,49 @@ via-IR, whose `bytes[]` call prints arguments that read a local the decoder
 assigns later (an existing lifting defect; that function is not executed).
 Each method runs against Py-EVM on the contract's own returns and on every
 malformed sample served by stub contracts. 502 passed, 17 skipped.
+
+## Memory forwarding across private calls, and Vyper call results
+
+Half of the held-out raw lines (9,390 of 18,847) are in the four Curve (Vyper)
+contracts: Vyper keeps locals, call buffers and loop counters at constant
+memory addresses. 72% of those lines are stores to a constant address and
+later reads of it. Measured first, two ways to treat such a word as a
+variable were rejected: contract-wide, no slot is free of other accesses (a
+pointer or slice may reach any address); per function with its callees, at
+most 2-8% of Curve's raw lines become slot-free even assuming every memory
+array has at most 8 elements (call buffers, slices and indexed arrays share
+the slots). What was built instead extends memory forwarding:
+
+- Write summaries (`memory_liveness.compute_write_summaries`): the absolute
+  and `constant + index` ranges each function and its callees may write;
+  unknown when an address depends on a local or the free pointer. A private
+  call now kills only the facts those ranges overlap (it cleared all facts
+  before). Pure helpers such as `_SafeMul` keep facts alive in Solidity too:
+  Maker Vat reads `v19` instead of `MEM[224]`, Compound's repay path its
+  computed values instead of struct words.
+- Returned words: after a call and `require(returndata.length >= n)` (only
+  checks in between), the call's constant output buffer holds its first
+  n / 32 returned words (the EVM copied them). Reads of them become the call's
+  results, added to its targets: `(v29, v29_1) = _lp_token.totalSupply();
+  ... return v25 * 1e18 / v29_1;`. The interpreter assigns returned word i
+  to target i + 1, zero-padded, which equals the buffer after the check.
+- In Vyper code (runtime not starting with solc's free-pointer setup), the
+  word at 0x40 is forwarded like any other.
+
+Results (all held-out contracts re-rendered against ffc3f4b;
+`results/*-vyper-returns.json`): raw lines 18,847 -> 18,652 (31.0% -> 30.7%),
+code lines 60,784 -> 60,693; stableswap-ng 5,799 -> 5,669 raw, tricrypto2
+1,571 -> 1,540, stETH 790 -> 768, 3pool 1,230 -> 1,222. Every score count,
+wrong claims (4), uncertain lines and unaccounted IR statements unchanged.
+
+New fixture `VyperExternalFixture` (Vyper 0.2.12 and 0.3.10): calls returning
+a word and a pair, results used in arithmetic and a storage write; outside
+the dispatcher no raw memory is left. Executed against Py-EVM with the
+contract's own returns and stubs returning empty, short, exact and longer
+data. 508 passed, 17 skipped.
+
+What keeps Curve raw: Vyper 0.2's frame saves and restores around private
+calls (callee read summaries cannot show the saved words unread), arrays
+indexed by counters kept in memory, and call arguments staged at constant
+buffers that later code reads back.
+

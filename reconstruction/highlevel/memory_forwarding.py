@@ -28,6 +28,7 @@ from .ir import (
     Member,
     ParallelAssign,
     RawBlock,
+    Require,
     Slice,
     Stmt,
     Var,
@@ -93,6 +94,13 @@ class Forwarder:
         self.model = model
         self.callees = callees
         self.signatures = signatures or {}
+        # Memory each private function may write (memory_liveness write summaries).
+        self.writes: dict[str, frozenset[Range] | None] = {}
+        # 0x40 holds solc's free pointer (not forwarded); in Vyper it is an ordinary word.
+        self.free_pointer_word = True
+        # The call just processed (only checks since), and returned words named so far.
+        self.last_call: Assign | None = None
+        self.returned: dict[str, tuple[Assign, int]] = {}
         # Locals assigned once to a stable value (set by forward_memory): call
         # bounds are resolved through them, e.g. `v59 = v47 + 164`.
         self.definitions: dict[str, Expr] = {}
@@ -335,13 +343,16 @@ class Forwarder:
             isinstance(expr, Index)
             and isinstance(expr.base, Env)
             and expr.base.name == "MEM"
-            and not (isinstance(expr.key, Const) and expr.key.value == 0x40)
+            and not (
+                isinstance(expr.key, Const) and expr.key.value == 0x40 and self.free_pointer_word
+            )
         ):
             # The pointer word itself is not forwarded: `v = MEM[64]` stays a
             # recognizable free-pointer read (and keeps its value number).
             key = self.key(expr.key)
             if key is not None and key in facts:
                 value = facts[key]
+                self.use_returned(value)
                 self.forwarded += 1
                 return replace(
                     value,
@@ -358,6 +369,8 @@ class Forwarder:
     def statement(self, stmt: Stmt, facts: Facts) -> Facts:
         if isinstance(stmt, Comment):
             return facts
+        if isinstance(stmt, (If, While, RawBlock, Jump)):
+            self.last_call = None  # returned words: only checks right after the call
         if isinstance(stmt, If):
             stmt.condition = self.rewrite(stmt.condition, facts)
             then = self.block(stmt.then, dict(facts))
@@ -375,13 +388,79 @@ class Forwarder:
             return {}
         if isinstance(stmt, Jump):
             return facts
+        if isinstance(stmt, Require):
+            self.returned_words(stmt, facts)
         # Rewrite the reads this statement performs.
         self.decode_consumer(stmt, facts)
         self.selector_merge = self.merged_selector(stmt)
         self.rewrite_reads(stmt, facts)
         # Then apply its effects to the facts.
         self.apply_effects(stmt, facts)
+        if isinstance(stmt, Assign) and isinstance(stmt.value, ExternalCallExpr):
+            self.last_call = stmt
+        elif not isinstance(stmt, Require):
+            self.last_call = None
         return facts
+
+    def returned_words(self, check: Require, facts: Facts) -> None:
+        """After `require(returndata.length >= n)` following a call (only checks in
+        between), the call's output buffer holds its first n / 32 returned words:
+        the EVM copied them there. They become facts naming the call's results
+        (added to its targets when read; the interpreter assigns returned word i
+        to target i + 1)."""
+        from .ir import Binary
+
+        call = self.last_call
+        condition = check.condition
+        if call is None or check.payload is not None or not isinstance(condition, Binary):
+            return
+        length = condition.left
+        if not (
+            isinstance(length, Member)
+            and length.name == "length"
+            and isinstance(length.base, Env)
+            and length.base.name == "returndata"
+            and isinstance(condition.right, Const)
+        ):
+            return
+        bound = condition.right.value
+        if condition.op in {">", "s>"}:
+            words = (bound + 1) // 32
+        elif condition.op in {">=", "s>="}:
+            words = bound // 32
+        else:
+            return
+        output = call.meta.get("output")
+        targets = call.targets
+        if output is None or not targets or not isinstance(output[1], Const):
+            return
+        key = self.key(output[0])
+        if key is None or key[0] is not None:
+            return  # constant buffers only (Vyper): no free-pointer version to track
+        words = min(words, output[1].value // 32, 8)
+        success = targets[0]
+        if not isinstance(success, Var) or not is_local(success) or success.name == "_":
+            return
+        for index in range(words):
+            name = f"{success.name}_{index + 1}"
+            if len(targets) > index + 1:
+                existing = targets[index + 1]
+                if not (isinstance(existing, Var) and existing.name in {name, "_"}):
+                    return
+            word = Var(name, f"returned:{call.origin}:{index}", evidence=check.evidence)
+            self.returned[name] = (call, index + 1)
+            facts[(key[0], key[1] + 32 * index)] = word
+
+    def use_returned(self, value: Expr) -> None:
+        """A forwarded returned word: the call assigns it (earlier positions `_`)."""
+        if not (isinstance(value, Var) and value.name in self.returned):
+            return
+        call, position = self.returned[value.name]
+        targets = list(call.targets)
+        while len(targets) <= position:
+            targets.append(Var("_"))
+        targets[position] = Var(value.name, value.ssa)
+        call.targets = tuple(targets)
 
     def merged_selector(self, stmt: Stmt) -> int | None:
         """`MEM[a] = uint224(MEM[a]) | (sel << 224)`: only the 4 bytes at a change."""
@@ -430,9 +509,18 @@ class Forwarder:
         elif isinstance(stmt, ExprStmt):
             exprs.append(stmt.expr)
         for expr in exprs:
-            if self.calls_function(expr):
+            called = self.called_functions(expr)
+            if called is None:
                 facts.clear()
                 return
+            for name in called:
+                # A private call kills what it (or its callees) may write.
+                written = self.writes.get(name)
+                if written is None:
+                    facts.clear()
+                    return
+                for item in written:
+                    self.kill_range(facts, item)
         if isinstance(stmt, Assign):
             if isinstance(stmt.value, ExternalCallExpr):
                 output = stmt.meta.get("output")
@@ -497,12 +585,19 @@ class Forwarder:
                     facts, self.model.range(start, size.value if isinstance(size, Const) else None)
                 )
 
-    def calls_function(self, expr: Expr) -> bool:
-        if isinstance(expr, Call) and (expr.name in self.callees or expr.name.startswith("fn_")):
-            return True
-        if isinstance(expr, Call) and expr.name == "msize":
-            return True
-        return any(self.calls_function(child) for child in expr.children())
+    def called_functions(self, expr: Expr) -> set[str] | None:
+        """Private functions the expression calls; None: msize (reads the size)."""
+        from .passes import iter_expr
+
+        names: set[str] = set()
+        for node in iter_expr(expr):
+            if isinstance(node, Call) and (
+                node.name in self.callees or node.name.startswith("fn_")
+            ):
+                names.add(node.name)
+            elif isinstance(node, Call) and node.name == "msize":
+                return None
+        return names
 
     def invalidate_body(self, statements: list[Stmt], facts: Facts) -> None:
         """Drop facts any statement in a loop body may invalidate (any iteration)."""
@@ -523,6 +618,8 @@ def forward_memory(
     callees: frozenset[str],
     signatures: dict[str, str] | None = None,
     consumer_writers: dict[str, set[str]] | None = None,
+    writes: dict[str, frozenset[Range] | None] | None = None,
+    free_pointer_word: bool = True,
 ) -> set[str]:
     """Apply forwarding to a function body; returns consumers decoded into words."""
     from .passes import is_free_pointer_read, iter_statements
@@ -554,6 +651,8 @@ def forward_memory(
         and stmt.targets[0].name not in free_pointer_vars
         and _stable(stmt.value)
     }
+    forwarder.writes = dict(writes or {})
+    forwarder.free_pointer_word = free_pointer_word
     forwarder.block(state.body, {})
     if consumer_writers is not None and forwarder.decoded:
         link_decoded_inputs(state.body, forwarder, consumer_writers)

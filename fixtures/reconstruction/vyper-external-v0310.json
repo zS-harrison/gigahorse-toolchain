@@ -1,0 +1,140 @@
+{
+  "compiler": "0.3.10+commit.9136169",
+  "source": "VyperExternalFixture.vy",
+  "source_sha256": "95cf2c82c3f2e81ac4680de352f6a239fee40426e5d49d3e0a79e6e9303d280a",
+  "bytecode_sha256": "c4cc14e21a608eaba9989f5e285832dd0eef5813568b15f8e7f7b6c1d72e6e30",
+  "settings": {
+    "outputSelection": {
+      "*": [
+        "evm.bytecode",
+        "evm.deployedBytecode",
+        "abi"
+      ]
+    },
+    "optimize": "gas"
+  },
+  "method_identifiers": {
+    "value(uint256)": "c5a46ee6",
+    "pair(uint256)": "645751af",
+    "combined(address,uint256)": "7213523c",
+    "both(address,uint256)": "e2999cfa",
+    "save(address,uint256)": "618174f2",
+    "stored()": "e582dd31"
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256"
+        }
+      ],
+      "name": "value",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256"
+        }
+      ],
+      "name": "pair",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "name": "target",
+          "type": "address"
+        },
+        {
+          "name": "x",
+          "type": "uint256"
+        }
+      ],
+      "name": "combined",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "name": "target",
+          "type": "address"
+        },
+        {
+          "name": "x",
+          "type": "uint256"
+        }
+      ],
+      "name": "both",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "name": "target",
+          "type": "address"
+        },
+        {
+          "name": "x",
+          "type": "uint256"
+        }
+      ],
+      "name": "save",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "stored",
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "creation_bytecode": "6102a6610011610000396102a6610000f35f3560e01c60026005820660011b61029c01601e395f51565b63e582dd3181186100335734610298575f5460405260206040f35b63618174f2811861029457604436103417610298576004358060a01c6102985760405260405163c5a46ee660805260243560a052602060806024609c845afa61007e573d5f5f3e3d5ffd5b60203d106102985760809050516060526060515f5480820182811061029857905090505f555f5460805260206080f3610294565b63c5a46ee681186102945760243610341761029857600435600381028160038204186102985790506001810181811061029857905060405260206040f3610294565b63645751af81186102945760243610341761029857600435600781018181106102985790506040526004358060011b818160011c1861029857905060605260406040f3610294565b637213523c81186101fc57604436103417610298576004358060a01c6102985760405260405163c5a46ee660805260243560a052602060806024609c845afa610187573d5f5f3e3d5ffd5b60203d1061029857608090505160605260405163c5a46ee660a05260605160c052602060a0602460bc845afa6101bf573d5f5f3e3d5ffd5b60203d106102985760a0905051608052606051600a810281600a820418610298579050608051808201828110610298579050905060a052602060a0f35b63e2999cfa811861029457604436103417610298576004358060a01c6102985760405260403660603760405163645751af60a05260243560c052604060a0602460bc845afa61024d573d5f5f3e3d5ffd5b60403d106102985760a09050805160605260208101516080525060605160648102816064820418610298579050608051808201828110610298579050905060a052602060a0f35b5f5ffd5b5f80fd013c00b2029400f40018841902a6810a00a16576797065728300030a0014"
+}

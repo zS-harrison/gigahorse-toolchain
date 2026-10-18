@@ -414,12 +414,113 @@ class Summaries:
     def __init__(self) -> None:
         self.entry: dict[str, Live] = {}
         self.returns: dict[str, Live] = {}
+        # writes[f]: memory f (and what it calls) may write, as absolute or
+        # at-least ranges; None (or absent): anything.
+        self.writes: dict[str, frozenset[Range] | None] = {}
+
+    def writes_of(self, name: str) -> frozenset[Range] | None:
+        return self.writes.get(name)
 
     def entry_of(self, name: str) -> Live:
         return self.entry.get(name, Live())
 
     def return_of(self, name: str) -> Live:
         return self.returns.get(name, Live())
+
+
+MEMORY_COPIES = {"CALLDATACOPY", "RETURNDATACOPY", "CODECOPY", "MCOPY", "EXTCODECOPY"}
+
+
+def _own_writes(body: list[Stmt], model: AddressModel, names: frozenset[str]):
+    """(ranges written by the body itself, callees), or None when unknown.
+
+    Only addresses independent of the function's own locals are summarized
+    (constants, and `constant + unknown index`, at-least); a write relative
+    to a local or the free pointer makes the summary unknown.
+    """
+    from .ir import ExprStmt
+    from .passes import iter_expr, iter_statements
+
+    ranges: set[Range] = set()
+    callees: set[str] = set()
+
+    def add(start: Expr, size: int | None) -> bool:
+        written = model.range(start, size)
+        if written.base not in {None, AT_LEAST}:
+            return False
+        ranges.add(Range(written.base, written.start, written.size))
+        return True
+
+    for stmt in iter_statements(body):
+        for expr in stmt.expressions():
+            for node in iter_expr(expr):
+                if isinstance(node, Call) and node.name in names:
+                    callees.add(node.name)
+                elif isinstance(node, Call) and (
+                    node.name.startswith("fn_") or node.name in {"msize", "private_call_unresolved"}
+                ):
+                    return None
+        if isinstance(stmt, Assign):
+            if isinstance(stmt.value, ExternalCallExpr):
+                output = stmt.meta.get("output")
+                if output is None:
+                    return None
+                start, size = output
+                if not add(start, size.value if isinstance(size, Const) else None):
+                    return None
+            for target in stmt.targets:
+                if isinstance(target, Index) and isinstance(target.base, Env):
+                    if target.base.name in {"MEM", "MEM8"}:
+                        if not add(target.key, 32 if target.base.name == "MEM" else 1):
+                            return None
+                elif not isinstance(target, Var):
+                    return None  # Field, Element, ...: object-relative
+        elif isinstance(stmt, ExprStmt):
+            if isinstance(stmt.expr, ExternalCallExpr):
+                output = stmt.meta.get("output")
+                if output is None:
+                    return None
+                start, size = output
+                if not add(start, size.value if isinstance(size, Const) else None):
+                    return None
+            elif isinstance(stmt.expr, Call) and stmt.expr.name in MEMORY_COPIES:
+                if len(stmt.expr.args) != 3:
+                    return None
+                size = stmt.expr.args[2]
+                if not add(stmt.expr.args[0], size.value if isinstance(size, Const) else None):
+                    return None
+    return ranges, callees
+
+
+def compute_write_summaries(
+    functions: dict[str, tuple[list[Stmt], AddressModel]],
+) -> dict[str, frozenset[Range] | None]:
+    """Memory each function may write, including through its callees (a fixpoint
+    over the call graph; unknown is absorbing)."""
+    names = frozenset(functions)
+    own = {name: _own_writes(body, model, names) for name, (body, model) in functions.items()}
+    result: dict[str, frozenset[Range] | None] = {
+        name: frozenset(entry[0]) if entry is not None else None for name, entry in own.items()
+    }
+    changed = True
+    while changed:
+        changed = False
+        for name, entry in own.items():
+            current = result[name]
+            if entry is None or current is None:
+                continue
+            merged = set(current)
+            for callee in entry[1]:
+                other = result.get(callee)
+                if other is None:
+                    merged = None
+                    break
+                merged |= other
+            updated = frozenset(merged) if merged is not None else None
+            if updated != current:
+                result[name] = updated
+                changed = True
+    return result
 
 
 def compute_summaries(
@@ -442,6 +543,7 @@ def compute_summaries(
                             after = liveness.after.get(id(stmt), Live([EVERYTHING]))
                             returns[node.name] = returns[node.name].union(widen(after))
         if entry == summaries.entry and returns == summaries.returns:
+            summaries.writes = compute_write_summaries(functions)
             return summaries
         summaries.entry, summaries.returns = entry, returns
     widened = Summaries()

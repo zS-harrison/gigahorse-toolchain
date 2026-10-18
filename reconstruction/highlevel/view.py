@@ -701,6 +701,13 @@ def prepare_function(context: ProgramContext, function: Function) -> _Prepared:
     return _Prepared(function, lifter, item, state)
 
 
+def uses_free_pointer(runtime: str | None) -> bool:
+    """solc's runtime code starts by setting the free pointer at 0x40 (to 0x80, or
+    0x60 before 0.4.22, or 0xa0); Vyper's does not, and uses 0x40 as any word."""
+    code = (runtime or "").removeprefix("0x").lower()
+    return not code or code.startswith(("6080", "6060", "60a0", "60406080"))
+
+
 def memory_summaries(
     context: ProgramContext,
     prepared: list[_Prepared],
@@ -743,7 +750,12 @@ def finish_function(
         sequential_merges(state)
         copy_propagation(state)
         lifter.abstracted |= forward_memory(
-            state, callees, context.external_signatures, lifter.consumer_writers
+            state,
+            callees,
+            context.external_signatures,
+            lifter.consumer_writers,
+            summaries.writes,
+            free_pointer_word=uses_free_pointer(context.program.runtime_bytecode),
         )
     copy_propagation(state)
     empty_memory_operations(state, callees)

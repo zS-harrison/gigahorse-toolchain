@@ -176,6 +176,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | `abi.decode(returndata, (T))` for `bytes`, `uint256[]`, `bytes[]` and tuples of them, accepted only when executing the compiled region matches the interpreter's decoder on valid and malformed returned data (17 inputs per type; legacy, via-IR, solc 0.7 variants). 8 of the held-out set's 10 dynamic decodes (ENS multicall, Balancer, CoW, MetaMorpho, V3/V4 managers); scores unchanged, wrong claims 4; code lines 60,901 -> 60,784 | V4 position manager's decodes whose unused parts the analysis removed; a via-IR call whose printed arguments read a later local; static return decodes; encodings with two dynamic values; strings at the folded pointer 0x80 |
 
+### Status update 2026-10-18: memory forwarding across private calls; Vyper call results
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | Interprocedural memory write summaries let forwarding pass private calls that cannot write a word (e.g. `_SafeMul`, Vyper helpers); Vyper calls' results read back from the output buffer print as the call's results (`(v1, v1_1) = target.value(x)`), and 0x40 is an ordinary word outside solc code. Held-out raw lines 18,847 -> 18,652, scores unchanged, wrong claims 4 | Curve raw share still 40-50%: Vyper 0.2 frame saves/restores around private calls, memory arrays indexed by memory loop counters, call staging at constant buffers. A contract-wide "slot as local" analysis frees at most 2-8% of Curve's raw lines even with assumed array bounds (measured), so it was not built |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority
