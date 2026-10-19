@@ -1997,3 +1997,40 @@ unchanged. Run-2 Dedaub comparison: raw share 26.4% / 25.7%
 (`results/run2-dedaub-comparison-calldata-view.json`). Router02's execution
 test (swaps over calldata paths) checks the new forms. 508 passed, 17 skipped.
 
+## Free-pointer reads folded into the call they locate
+
+Of 774 free-pointer reads (`p = MEM[64]`) in structured non-Curve code, 176
+were used by nothing printed: only the next call's recorded input or output
+buffer position named them (`v50 = MEM[64]; require(WETH.code.length);
+v53 = WETH.withdraw(v48);`). When exactly one statement uses such a p, later
+in the same list, with only checks and memory-free local values in between,
+the call's buffer position now reads MEM[64] itself (the same value: nothing
+in between can move the free pointer) and the read's line folds into the
+call's (`calldata_view.fold_pointer_reads`).
+
+Results (against d4387c1; `results/*-pointer-reads.json`): raw lines 18,400
+-> 18,239 (30.3% -> 30.1%), code lines 60,693 -> 60,532; Compound cETH 73 ->
+47 raw, Router02 142 -> 114, SwapRouter02 485 -> 454, Chainlink proxy 101 ->
+81, Tether 7 -> 1. Every score count and wrong claims (4) unchanged. Run-2
+Dedaub comparison: 17,597 / 12,671 code lines, raw share 26.4% / 25.7%
+(`results/run2-dedaub-comparison-pointer-reads.json`). Router02's execution
+test runs the folded calls (35 -> 7 free-pointer reads there). 508 passed.
+
+### Where the improvement loop stopped
+
+The last three rounds cut held-out raw share by 0, 0.4 and 0.2 points (frame
+stores measured and dropped; calldata accessors; folded pointer reads), the
+loop's stop condition. Measured causes of what remains (18,239 raw lines):
+
+- stableswap-ng alone: 5,669 (31%). One private function (Newton iterations)
+  has 1,727; its variables are loop-carried memory slots, which no Python-only
+  pass measured here can free (slots as variables: at most ~2% of its raw
+  lines; dead frame stores: 0.1%).
+- Unstructured functions: 2,180 (12%), mostly 3pool (951; its four frames
+  over 36 words) and 1inch (780; three native call-graph causes recorded in
+  "Unstructured functions in Balancer and 1inch"). Both need changes to the
+  native analysis and native re-runs of those held-out contracts.
+- Seaport: 1,992, hand-written calldata and memory offsets (Dedaub: 2,306).
+- On the seven run-2 contracts we are at 26.4% raw against Dedaub's 25.7%;
+  without Curve 3pool (40% here, 20% in Dedaub's partial export) we are below.
+

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..model import Function, Program
 from .abi_codec import recognize_abi_coders
-from .calldata_view import calldata_accessors
+from .calldata_view import calldata_accessors, fold_pointer_reads
 from .dispatch import dispatch_value_checks, table_dispatcher, uses_table
 from .errors import recognize_error_payloads
 from .idioms import (
@@ -502,6 +502,8 @@ def build_decompiled(
         for view in views
         if view.function.selectors and not view.arguments_unknown
     )
+    for view in views:
+        fold_pointer_reads(view.body)
     refine_160_bit_returns(views)
     storage = name_storage_from_getters(views)
     declarations, field_types = storage_declarations(views, context, storage)

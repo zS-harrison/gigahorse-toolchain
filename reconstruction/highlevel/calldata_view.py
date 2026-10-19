@@ -1,4 +1,5 @@
-"""Calldata words of dynamic arguments printed through the argument.
+"""Calldata words of dynamic arguments printed through the argument; free-pointer
+reads folded into the call whose buffer they locate.
 
 A dynamic argument x is the calldata position of its length word: x =
 msg.data[4 + 32 * i] + 4 for argument i (its definition). So
@@ -114,3 +115,125 @@ def calldata_accessors(arguments, body) -> int:
     for stmt in iter_statements(body):
         _map_statement(stmt, fn)
     return count
+
+
+def fold_pointer_reads(body) -> int:
+    """`p = MEM[64]` used only as a call's buffer position (its metadata): the call
+    reads MEM[64] itself, and the read's line folds into the call's.
+
+    Only when exactly one statement uses p, after it in the same list, with
+    nothing in between that could move the free pointer (only checks and local
+    values reading no memory), so MEM[64] still holds p when the call runs.
+    """
+    from .ir import Assign, Comment, Require
+    from .passes import is_free_pointer_read, map_bodies, statement_ids
+
+    printed: dict[str, int] = {}
+    for stmt in iter_statements(body):
+        for expr in stmt.expressions():
+            for node in _walk(expr):
+                if isinstance(node, Var):
+                    printed[node.name] = printed.get(node.name, 0) + 1
+    folded = 0
+
+    def quiet(stmt) -> bool:
+        if isinstance(stmt, (Comment, Require)):
+            return not any(_touches(e) for e in stmt.expressions())
+        return (
+            isinstance(stmt, Assign)
+            and len(stmt.targets) == 1
+            and is_local(stmt.targets[0])
+            and not _touches(stmt.value)
+        )
+
+    def visit(statements):
+        nonlocal folded
+        index = 0
+        while index < len(statements):
+            stmt = statements[index]
+            if not (
+                isinstance(stmt, Assign)
+                and len(stmt.targets) == 1
+                and is_local(stmt.targets[0])
+                and is_free_pointer_read(stmt.value)
+                and printed.get(stmt.targets[0].name, 0) == 1  # its own definition
+            ):
+                index += 1
+                continue
+            name = stmt.targets[0].name
+            user = None
+            for later in statements[index + 1 :]:
+                if _mentions_meta(later, name):
+                    user = later
+                    break
+                if not quiet(later):
+                    break
+            if user is None or any(
+                _mentions_meta(other, name)
+                for other in iter_statements(statements)
+                if other is not user
+            ):
+                index += 1
+                continue
+            pointer = stmt.value
+            user.meta = {
+                key: (
+                    tuple(_replace_var(e, name, pointer) for e in value)
+                    if key in {"input", "output"}
+                    else value
+                )
+                for key, value in user.meta.items()
+            }
+            user.hidden = user.hidden | statement_ids(stmt)
+            del statements[index]
+            folded += 1
+        return statements
+
+    map_bodies(body, visit)
+    return folded
+
+
+def _walk(expr):
+    yield expr
+    for child in expr.children():
+        yield from _walk(child)
+
+
+def _touches(expr) -> bool:
+    """Reads or writes memory, or calls anything (could move the free pointer)."""
+    from .ir import Call, ExternalCallExpr, Slice
+
+    for node in _walk(expr):
+        if isinstance(node, (ExternalCallExpr, Slice)):
+            return True
+        if (
+            isinstance(node, Index)
+            and isinstance(node.base, Env)
+            and node.base.name
+            in {
+                "MEM",
+                "MEM8",
+            }
+        ):
+            return True
+        if isinstance(node, Call) and not node.name.startswith(
+            ("uint", "int", "bytes", "address", "bool")
+        ):
+            return True
+        if type(node).__name__ in {"Field", "Element", "Allocation", "AbiCodec", "MemoryBytes"}:
+            return True
+    return False
+
+
+def _mentions_meta(stmt, name: str) -> bool:
+    for key in ("input", "output"):
+        for expr in stmt.meta.get(key, ()) or ():
+            if any(isinstance(n, Var) and n.name == name for n in _walk(expr)):
+                return True
+    return False
+
+
+def _replace_var(expr, name: str, replacement):
+    from .types import map_expr
+
+    return map_expr(expr, lambda n: replacement if isinstance(n, Var) and n.name == name else n)

@@ -188,6 +188,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | `x.offset` for a dynamic argument's head word and `x[j]` for elements of a calldata array of one-word elements (`address(varg2[varg2.length - 1])`). Held-out raw lines 18,652 -> 18,400 (30.7% -> 30.3%), Router02 15.5% -> 12.5%; run-2 raw share 26.4% (Dedaub 25.7%); scores unchanged, wrong claims 4. Vyper frame-store hiding measured first and dropped (ceiling 4.1% of 3pool's raw lines, under 1% elsewhere) | 1inch's calldata lines are mostly in its 9 unstructured functions (2,180 raw lines in unstructured functions overall); Seaport's nested offset arithmetic |
 
+### Status update 2026-10-18: free-pointer reads folded into calls; loop stopped
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | A free-pointer read used only to locate the next call's buffer folds into that call. Held-out raw lines 18,400 -> 18,239 (30.3% -> 30.1%); scores unchanged, wrong claims 4. Run-2 raw share 26.4% vs Dedaub 25.7%. Three rounds in a row gained under 0.5 points (0, 0.4, 0.2): the improvement loop's stop condition | The rest needs native-analysis work on held-out contracts (1inch and 3pool unstructured functions: 2,180 raw lines; Vyper frames over 36 words), or a Vyper memory model (stableswap-ng: 5,669 raw lines, loop-carried memory variables) |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

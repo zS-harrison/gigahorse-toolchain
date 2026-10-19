@@ -431,6 +431,8 @@ def test_router02_pair_addresses_and_swaps_match_evm(tmp_path, monkeypatch, reco
     )
     assert "fn_0x4d9f(address(varg2[1]), address(varg2[0]))" in text
     assert "require(varg2.offset <= 0x100000000);" in text
+    # Free-pointer reads that only locate a call's buffer fold into the call.
+    assert text.count("= MEM[64];") <= 8
     token_a, token_b, token_c, token_d = 0x1000, 0x2000, 0x3000, 0x4000
     pairs = {
         pair_for(token_a, token_b): words(10**21, 4 * 10**21, 1),
