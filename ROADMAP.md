@@ -212,6 +212,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | `saveFrame` / `restoreFrame` for Vyper 0.2 frames and tuple loads/stores for runs of consecutive constant words, executed word by word: held-out raw lines 19,125 -> 17,202 (31.5% -> 29.2%), 3pool 63.6% -> 46.4%; scores unchanged | 1inch's unstructured functions (shared epilogue, passed-through return labels); emptied Vyper counter loops |
 
+### Status update 2026-10-19: 1inch structured by the scalable stack height
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | Scalable-configuration stack height 30 -> 45: 1inch 6,635 -> 2,961 code lines (Dedaub 3,168), unstructured 9 -> 4, uncertain 409 -> 146, payability 36 -> 42 and returns 31 -> 34 correct, wrong claims 0, peak 16.4 GB | 1inch's 4 remaining unstructured functions; Universal Router's timeout-dependent native result |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

@@ -2190,3 +2190,51 @@ unaccounted IR statements unchanged. Run-2 Dedaub comparison: 16,747 /
 Py-EVM in the Vyper frames fixtures, Router02, Multicall3, the Uniswap V2 pair
 and the failure fixtures. 511 passed, 17 skipped.
 
+## 1inch: the scalable configuration's stack height
+
+1inch is analyzed in Gigahorse's scalable configuration (the default one runs
+out of memory, and the driver falls back at half the timeout). That
+configuration tracks only 30 stack slots (`logic/fallback_scalable.dl`; the
+default tracks 70). The three fillOrder variants keep return addresses deeper
+than that: `0x24ba` jumps to `0x1341`, a return address pushed far upstream,
+so the native analysis recorded `MissingJumpTargetAnyCtx` for it, never
+reached the shared epilogue at `0x1341`, and left the functions unstructured.
+The scalable stack height is now 45.
+
+Only contracts that fall back to the scalable configuration can change: of
+the held-out contracts, 1inch and the Euler EVC (all fixtures and every other
+held-out contract run in the default configuration; set 4's Universal Router
+reaches `last_resort`). Re-analyzed natively, one at a time
+(`results/runs1-2-scalable-stack.json`, `results/run4-scalable-stack.json`):
+
+| 1inch v5 | Before | After |
+| --- | --- | --- |
+| Code lines | 6,635 | 2,961 (Dedaub: 3,168) |
+| Raw lines | 1,114 | 626 |
+| Unstructured functions | 9 | 4 |
+| Uncertain lines | 409 | 146 |
+| Argument types correct | 78 | 81 |
+| Payability correct / unresolved | 36 / 9 | 42 / 3 |
+| Returns correct | 31 | 34 |
+| Wrong claims | 0 | 0 |
+| Time, peak memory | | 290.7 s, 16.41 GB |
+
+Euler EVC: uncertain lines 114 -> 112, unaccounted IR statements 5 -> 0,
+scores unchanged (196.9 s, 12.65 GB). Held-out totals: code lines 58,878 ->
+55,177, raw lines 17,202 -> 16,693; the raw share rises 29.2% -> 30.3%
+because 1inch loses far more duplicated plain lines than raw ones. Run-2
+Dedaub comparison: 13,073 / 12,671 code lines (was 16,747), raw share 30.1% /
+25.7% (`results/run2-dedaub-comparison-scalable-stack.json`).
+
+1inch's four remaining unstructured functions: a multi-target jump at the
+shared epilogue `0x1341` itself (now reached), one at `0x1a15`, one at
+`0xff4`, and `uniswapV3Swap`'s return label passed through another call.
+
+Set 4's Universal Router, re-analyzed twice (scalable height 45 and 30), gives
+the same new relations both times, which differ from its first run (5,308 vs
+5,579 TAC operations; argument types 5 vs 13 correct): it finishes only through
+timeout-driven fallbacks, so its native result depends on where each stage is
+cut off. The current code renders the first run's relations exactly as scored,
+so set 4 keeps them; this nondeterminism is noted, not attributed to this change.
+511 passed, 17 skipped.
+
