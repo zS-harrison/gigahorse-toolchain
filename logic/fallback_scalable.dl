@@ -1,7 +1,7 @@
 
 #define CONTEXT_SENSITIVITY FiniteShrinkingContext
 
-#define MAX_STACK_HEIGHT 45
+#define MAX_STACK_HEIGHT 60
 
 #include "main.dl"
 

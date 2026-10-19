@@ -117,6 +117,60 @@ def test_call_with_two_continuations_is_split_by_its_return_address():
     assert plan.region is None and "Ambiguous internal call continuation" in plan.warnings[0]
 
 
+def test_return_address_through_a_merge_block_is_split_there_first():
+    """A shared region's return address reaches it through a merge block that
+    itself joins two callers with different constants (1inch uniswapV3Swap):
+    the merge block is duplicated per predecessor, then the region per caller,
+    and every path returns where its own constant points."""
+    blocks = [
+        Block("0x0", [_stmt("0x1", "JUMPI", (), ("to_b", "c0"))], ["0x10", "0x20"], ["0x20"]),
+        Block("0x10", [_stmt("0x11", "CONST", ("r1",)), _stmt("0x12", "JUMP")], ["0x40"], []),
+        Block("0x20", [_stmt("0x21", "CONST", ("r2",)), _stmt("0x22", "JUMP")], ["0x40"], []),
+        # The merge block: its PHI joins r1 / r2, then it jumps to the region head.
+        Block(
+            "0x40",
+            [_stmt("0x41", "PHI", ("m",), ("r1", "r2")), _stmt("0x42", "JUMP")],
+            ["0x50"],
+            [],
+        ),
+        Block(
+            "0x50",
+            [
+                _stmt("0x51", "PHI", ("ret",), ("m",)),
+                _stmt("0x52", "JUMP", (), ("ret",)),
+            ],
+            ["0x100", "0x200"],
+            [],
+        ),
+        Block("0x100", [_stmt("0x101", "STOP")], [], []),
+        Block("0x200", [_stmt("0x201", "STOP")], [], []),
+    ]
+    function = Function("fn", ["0x0"], [], None, [], [b.id for b in blocks])
+    program = Program(
+        {"r1": "0x100", "r2": "0x200"},
+        {"to_b": "0x10"},
+        [function],
+        blocks,
+        [],
+        [],
+        phi_inputs=[
+            ("0x41", "0x10", "r1"),
+            ("0x41", "0x20", "r2"),
+            ("0x51", "0x40", "m"),
+        ],
+    )
+    plan = structure_function(program, function, split_shared_returns=True)
+    assert plan.region is not None, plan.warnings
+
+    def ends(node, seen=()):
+        transfer = plan.transfers[node]
+        if not transfer.targets:
+            return {plan.origin.get(node, node)}
+        return set().union(*(ends(t, (*seen, node)) for t in transfer.targets if t not in seen))
+
+    assert ends("0x10") == {"0x100"} and ends("0x20") == {"0x200"}
+
+
 def _call_program(extra):
     """A call whose block also has an edge into `extra` (1inch fn_0x14b2's shape)."""
     blocks = [

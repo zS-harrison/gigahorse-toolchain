@@ -2238,3 +2238,41 @@ cut off. The current code renders the first run's relations exactly as scored,
 so set 4 keeps them; this nondeterminism is noted, not attributed to this change.
 511 passed, 17 skipped.
 
+### 1inch fully structured (scalable stack height 60, nested return merges)
+
+Two more steps finish 1inch:
+
+- The scalable configuration's stack height 45 -> 60: three of the four
+  remaining functions (jumps whose constant targets were still lost) become
+  structured. Peak 17.9 GB (cap 20 GB), 276.8 s. Euler EVC, the only other
+  held-out contract in that configuration, is identical at 45 and 60.
+- `uniswapV3Swap`'s return address reaches its shared region through merge
+  blocks that themselves join callers with different constants (0x2feb from
+  one path, 0x306c from another, 0x304a from a third caller of the region).
+  `split_shared_regions` now follows such a value back through PHIs of
+  single-predecessor blocks, and when a merge block with several
+  predecessors carries it, duplicates that block per predecessor first
+  (bounded by the node limit; anything else stays explicit). New synthetic
+  test: a merge block joining two return constants before a shared region.
+
+| 1inch v5 | Start of phase 2 | Now |
+| --- | --- | --- |
+| Code lines | 6,635 | 2,845 (Dedaub: 3,168) |
+| Raw lines | 1,114 | 760 |
+| Unstructured functions | 9 | 0 |
+| Uncertain lines | 409 | 122 |
+| Argument types correct | 78 | 83 |
+| Payability correct | 36 of 45 | 45 of 45 |
+| Returns correct | 31 | 35 |
+| Wrong claims | 0 | 0 |
+
+No other contract changes (`results/runs1-2-structured.json`,
+`results/run4-structured.json`). Held-out totals now: 55,061 code lines,
+16,827 raw (30.6%; the share rose from 30.1% at the start of phase 2 while
+raw lines fell from 18,239, because duplicated plain lines went faster), 9
+unstructured functions left in all held-out sets (Euler EVC 5, Seaport,
+V4 pool manager, stableswap-ng and MetaMorpho 1 each), all scores at or above
+their earlier values, wrong claims 4. Run-2 Dedaub comparison: 12,957 /
+12,671 code lines, raw share 31.4% / 25.7%
+(`results/run2-dedaub-comparison-structured.json`). 512 passed, 17 skipped.
+

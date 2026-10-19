@@ -218,6 +218,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | Scalable-configuration stack height 30 -> 45: 1inch 6,635 -> 2,961 code lines (Dedaub 3,168), unstructured 9 -> 4, uncertain 409 -> 146, payability 36 -> 42 and returns 31 -> 34 correct, wrong claims 0, peak 16.4 GB | 1inch's 4 remaining unstructured functions; Universal Router's timeout-dependent native result |
 
+### Status update 2026-10-19: 1inch and 3pool fully structured
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | 1inch 9 -> 0 unstructured functions (scalable stack height 60; return addresses through nested merge blocks), 2,845 code lines vs Dedaub 3,168, payability 45/45, wrong claims 0; 3pool 8 -> 0 (frames up to 80 words). Held-out: 9 unstructured functions left (Euler EVC 5), 55,061 code lines, raw 16,827 (30.6%) | Same-bytecode Dedaub comparison on sets 3 and 4 (exports requested); raw share vs Dedaub on run 2 (31.4% / 25.7%) |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

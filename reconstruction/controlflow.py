@@ -693,7 +693,7 @@ def split_shared_regions(
     transfers: dict[str, Transfer],
     copies: dict[tuple[str, str], list[Copy]],
     *,
-    max_rounds: int = 16,
+    max_rounds: int = 64,
     max_nodes: int = 6000,
 ) -> tuple[dict[str, Transfer], dict[tuple[str, str], list[Copy]], dict[str, str]]:
     """Tail-duplicate shared regions that return through a constant-address PHI.
@@ -803,9 +803,76 @@ def split_shared_regions(
         callers = sorted(predecessors[head] - region)
         if not callers or predecessors[head] & region:
             raise Unstructured(f"Shared region at {head} is not a plain call target")
+
+        def along(
+            phi_id: str, node: str, depth: int = 0, predecessors=predecessors
+        ) -> tuple[str | None, str | None]:
+            """(value, None) when the edge from node into phi's block carries one
+            constant, following PHIs of node's block back through single
+            predecessors; (None, blocker) when a merge block with several
+            predecessors (its own PHI of the value) has to be duplicated first."""
+            values = phi_values.get((phi_id, original(node)), set())
+            if len(values) != 1 or depth > 16:
+                return None, None
+            value = next(iter(values))
+            if program.constants.get(value) is not None or value in program.block_targets:
+                return value, None
+            found = definitions.get(value)
+            if found is None or found[0] != original(node) or found[1].opcode != "PHI":
+                return None, None
+            sources = predecessors[node]
+            if len(sources) != 1:
+                return None, node
+            return along(found[1].id, next(iter(sources)), depth + 1, predecessors)
+
+        blocker = None
+        resolved: dict[str, str] = {}
+        for caller in callers:
+            value, blocked = along(phi.id, caller)
+            if value is None and blocked is not None:
+                blocker = blocked
+                break
+            if value is not None:
+                resolved[caller] = value
+        if blocker is not None:
+            # Tail-duplicate the merge block per predecessor, then retry.
+            sources = sorted(predecessors[blocker])
+            if (
+                blocker in region
+                or len(transfers) + len(sources) > max_nodes
+                or any(transfers[source].targets.count(blocker) != 1 for source in sources)
+            ):
+                raise Unstructured(f"Return address of {blocker} into {head} is unknown")
+            t = transfers[blocker]
+            for source in sources:
+                counter += 1
+                new = f"{original(blocker)}@{counter}"
+                origin[new] = original(blocker)
+                transfers[new] = Transfer(
+                    t.kind, t.targets, t.statement, t.predicate, t.ignored_terminal_targets
+                )
+                for (a, b), values in list(copies.items()):
+                    if a == source and b == blocker:
+                        copies[(source, new)] = values
+                    elif a == blocker:
+                        copies[(new, b)] = values
+                st = transfers[source]
+                transfers[source] = Transfer(
+                    st.kind,
+                    tuple(new if x == blocker else x for x in st.targets),
+                    st.statement,
+                    st.predicate,
+                    st.ignored_terminal_targets,
+                    st.callee,
+                    st.ignored_callee_copies,
+                    st.dispatch,
+                )
+            transfers.pop(blocker)
+            copies = {k: v for k, v in copies.items() if blocker not in k}
+            continue
         continuation: dict[tuple[str, str], str] = {}
         for caller in callers:
-            values = phi_values.get((phi.id, original(caller)), set())
+            values = {resolved[caller]} if caller in resolved else set()
             if len(values) != 1:
                 raise Unstructured(f"Return address of {caller} into {head} is unknown")
             for exit_node in exits:
