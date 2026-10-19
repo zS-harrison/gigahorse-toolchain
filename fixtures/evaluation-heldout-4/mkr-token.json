@@ -1,0 +1,14 @@
+{
+  "id": "mkr-token",
+  "chain_id": 1,
+  "address": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+  "bytecode_sha256": "1b5cc17b3e63182dda415ae7671eeee2ca6904c289d515c5a5b4c02359a56d12",
+  "bytecode_size": 3379,
+  "compiler": "0.4.18+commit.9cf6e910",
+  "language": "Solidity",
+  "runtime_match": "match",
+  "retrieved_at": "2026-10-19T04:28:29.864984+00:00",
+  "response_sha256": "716f1bc16230d42d450da0b2a1cfd16e545cca36b602b281d9fc741db3e6edb6",
+  "source": "https://sourcify.dev/server/v2/contract/1/0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "comet-usdc-proxy",
+  "chain_id": 1,
+  "address": "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+  "bytecode_sha256": "882d25cd6d729bac78ed7e63b0f05e2a476394850343864e2dab53a7ecc9812a",
+  "bytecode_size": 1878,
+  "compiler": "0.8.15+commit.e14f2714",
+  "language": "Solidity",
+  "runtime_match": "exact_match",
+  "retrieved_at": "2026-10-19T04:28:29.299056+00:00",
+  "response_sha256": "f1369dd622706dccbb46b3f7b26ec2672cb01eea6ec5d977f2d6ad63d6340238",
+  "source": "https://sourcify.dev/server/v2/contract/1/0xc3d688B66703497DAA19211EEdff47f25384cdc3?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

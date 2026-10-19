@@ -1,0 +1,14 @@
+{
+  "id": "uni-token",
+  "chain_id": 1,
+  "address": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+  "bytecode_sha256": "77ea2b530607db6cb87c7cce18016aa12dd0762c4357355bceee2cb11721bebe",
+  "bytecode_size": 12567,
+  "compiler": "0.5.16+commit.9c3226ce",
+  "language": "Solidity",
+  "runtime_match": "match",
+  "retrieved_at": "2026-10-19T04:28:28.313454+00:00",
+  "response_sha256": "059459229b906dd0d68c02e0d5c8c9559392ed5f94c631c88c72cfbb7b99bcea",
+  "source": "https://sourcify.dev/server/v2/contract/1/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

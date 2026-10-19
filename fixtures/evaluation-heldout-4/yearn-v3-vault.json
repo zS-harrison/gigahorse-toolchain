@@ -1,0 +1,14 @@
+{
+  "id": "yearn-v3-vault",
+  "chain_id": 1,
+  "address": "0xd8063123BBA3B480569244AE66BFE72B6c84b00d",
+  "bytecode_sha256": "35a309506cb6e18120a4dddfb30b528e9147ec790e6d18c5dc011d11499527a2",
+  "bytecode_size": 23754,
+  "compiler": "0.3.7+commit.6020b8bb",
+  "language": "Vyper",
+  "runtime_match": "match",
+  "retrieved_at": "2026-10-19T04:28:29.092740+00:00",
+  "response_sha256": "0317d1e02b517f326f497997247723f0ae6b0b9263682587e5f469928dec46ef",
+  "source": "https://sourcify.dev/server/v2/contract/1/0xd8063123BBA3B480569244AE66BFE72B6c84b00d?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

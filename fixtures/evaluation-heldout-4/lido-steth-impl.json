@@ -1,0 +1,14 @@
+{
+  "id": "lido-steth-impl",
+  "chain_id": 1,
+  "address": "0x17144556fd3424EDC8Fc8A4C940B2D04936d17eb",
+  "bytecode_sha256": "b2a54d53a4438ea92991425a3fcae181d52d194deedd1cb075a6bcb90e0eb8a3",
+  "bytecode_size": 23361,
+  "compiler": "0.4.24+commit.e67f0147",
+  "language": "Solidity",
+  "runtime_match": "exact_match",
+  "retrieved_at": "2026-10-19T04:28:28.713093+00:00",
+  "response_sha256": "ed43b48352dbd8e54b30dc038472a43d6e4e150e5e6634fa7ba1c59ea9c64dbb",
+  "source": "https://sourcify.dev/server/v2/contract/1/0x17144556fd3424EDC8Fc8A4C940B2D04936d17eb?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

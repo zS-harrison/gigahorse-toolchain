@@ -1,0 +1,14 @@
+{
+  "id": "universal-router",
+  "chain_id": 1,
+  "address": "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
+  "bytecode_sha256": "ff68d9a9b8bdaf3915cd2917547d9425e1198bce1dfbe3721732e00e8363bae2",
+  "bytecode_size": 17958,
+  "compiler": "0.8.17+commit.8df45f5f",
+  "language": "Solidity",
+  "runtime_match": "exact_match",
+  "retrieved_at": "2026-10-19T04:28:27.304942+00:00",
+  "response_sha256": "d1494fa70658b4ea2c11fe351e178d2d24054a7502e32b5f090e438d6e3f0a62",
+  "source": "https://sourcify.dev/server/v2/contract/1/0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "entrypoint-v06",
+  "chain_id": 1,
+  "address": "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+  "bytecode_sha256": "009b0281380fb08973d2b8e55936c0d55f5a1d65ddc5713944420e119455620c",
+  "bytecode_size": 23689,
+  "compiler": "0.8.17+commit.8df45f5f",
+  "language": "Solidity",
+  "runtime_match": "exact_match",
+  "retrieved_at": "2026-10-19T04:28:26.551870+00:00",
+  "response_sha256": "9d223f61a45ba3b78e2953e7f96e9b89b678537741c75e72a7e7c292db9842f6",
+  "source": "https://sourcify.dev/server/v2/contract/1/0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

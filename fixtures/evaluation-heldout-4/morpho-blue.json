@@ -1,0 +1,14 @@
+{
+  "id": "morpho-blue",
+  "chain_id": 1,
+  "address": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  "bytecode_sha256": "fd5aa16eea01735e0e33e51e913a27f7d5ed998adc0cec2bf1f9ea368d9e1bdf",
+  "bytecode_size": 15623,
+  "compiler": "0.8.19+commit.7dd6d404",
+  "language": "Solidity",
+  "runtime_match": "exact_match",
+  "retrieved_at": "2026-10-19T04:28:28.040833+00:00",
+  "response_sha256": "d98b40dacd2ad3dd037b723698bc0bc3e7ae0207b3c60b5db7cc476d4ac28be6",
+  "source": "https://sourcify.dev/server/v2/contract/1/0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb?fields=runtimeBytecode,compilation,abi",
+  "ground_truth_note": "ABI is scoring ground truth only; never supplied to analysis"
+}

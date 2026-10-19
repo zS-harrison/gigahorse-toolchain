@@ -1,0 +1,15 @@
+{
+  "selection_id": "heldout-4-2026-10-18",
+  "selected_at": "2026-10-18",
+  "rule": "Chosen and committed before any analysis, after the raw-share work stopped at b0bab72. Not tuned on: the first native scores are committed before any code changes made because of them. Dedaub exports are requested by the user and compared only after the first scores are recorded.",
+  "contracts": [
+    {"id": "entrypoint-v06", "chain_id": 1, "address": "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789", "why": "ERC-4337 EntryPoint v0.6, solc 0.8.17 via-IR, 1e6 runs: UserOperation struct arrays in calldata, assembly, try/catch, ETH accounting"},
+    {"id": "universal-router", "chain_id": 1, "address": "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD", "why": "Uniswap Universal Router, solc 0.8.17 via-IR: command bytes dispatch, abi.decode of calldata slices, Permit2 and V2/V3 swaps"},
+    {"id": "morpho-blue", "chain_id": 1, "address": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb", "why": "Morpho Blue core, solc 0.8.19 via-IR, 999999 runs: MarketParams struct parameters, callbacks with bytes data, EIP-712 authorization"},
+    {"id": "uni-token", "chain_id": 1, "address": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "why": "UNI governance token, solc 0.5.16: checkpoints, delegation by signature, uint96 safe math"},
+    {"id": "lido-steth-impl", "chain_id": 1, "address": "0x17144556fd3424EDC8Fc8A4C940B2D04936d17eb", "why": "Lido stETH implementation (AragonApp), solc 0.4.24: unstructured storage positions, shares accounting, old ABI coder"},
+    {"id": "yearn-v3-vault", "chain_id": 1, "address": "0xd8063123BBA3B480569244AE66BFE72B6c84b00d", "why": "Yearn V3 vault implementation, Vyper 0.3.7: ERC-4626, strategy dynamic arrays, a Vyper version not analyzed before"},
+    {"id": "comet-usdc-proxy", "chain_id": 1, "address": "0xc3d688B66703497DAA19211EEdff47f25384cdc3", "why": "Compound v3 cUSDCv3 proxy, solc 0.8.15 via-IR with runs 1 and custom Yul steps: a transparent proxy (admin checks, delegatecall forwarding)"},
+    {"id": "mkr-token", "chain_id": 1, "address": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2", "why": "MKR (DSToken), solc 0.4.18: ds-auth authority checks, bytes32 name/symbol, old dispatcher"}
+  ]
+}
