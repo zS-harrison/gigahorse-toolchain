@@ -194,6 +194,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | A free-pointer read used only to locate the next call's buffer folds into that call. Held-out raw lines 18,400 -> 18,239 (30.3% -> 30.1%); scores unchanged, wrong claims 4. Run-2 raw share 26.4% vs Dedaub 25.7%. Three rounds in a row gained under 0.5 points (0, 0.4, 0.2): the improvement loop's stop condition | The rest needs native-analysis work on held-out contracts (1inch and 3pool unstructured functions: 2,180 raw lines; Vyper frames over 36 words), or a Vyper memory model (stableswap-ng: 5,669 raw lines, loop-carried memory variables) |
 
+### Status update 2026-10-18: held-out run 5 (set 4, first scores)
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Held-out accuracy | Set 4 (8 contracts frozen before analysis: solc 0.4.18-0.8.19, three via-IR, Vyper 0.3.7, a proxy): 8/8 analyzed, 272/272 selectors, 0 wrong names or argument types, 4 wrong claims (two of them flattened static struct returns the scorer counts as wrong), raw share 35.3%, 4 unstructured functions | Same-bytecode Dedaub comparison for sets 3 and 4 (exports requested); Universal Router's 1,057 uncertain lines; Yearn's 51.6% raw (Vyper) |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

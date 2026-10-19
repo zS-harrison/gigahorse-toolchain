@@ -2034,3 +2034,40 @@ loop's stop condition. Measured causes of what remains (18,239 raw lines):
 - On the seven run-2 contracts we are at 26.4% raw against Dedaub's 25.7%;
   without Curve 3pool (40% here, 20% in Dedaub's partial export) we are below.
 
+## Held-out run 5: `heldout-4-2026-10-18` (first scores)
+
+Set 4 (`fixtures/evaluation-heldout-4/`, frozen in 6374e2f before any
+analysis) analyzed natively at b0bab72 + 6374e2f, one contract at a time
+(300 s native timeout, 16 GB cap). Nothing was changed because of these
+contracts before these scores were committed (`results/run5.json`).
+
+| Contract | Compiler | Time | Peak | Code lines | Raw | Selectors | Names correct / unnamed | Wrong claims | Uncertain | Unstructured |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| comet-usdc-proxy | 0.8.15 via-IR | 7.1 s | 0.04 GB | 273 | 33.0% | 5/5 | 5 / 0 | 0 | 1 | 0 |
+| mkr-token | 0.4.18 | 6.2 s | 0.04 GB | 282 | 8.5% | 25/25 | 25 / 0 | 0 | 3 | 0 |
+| uni-token | 0.5.16 | 10.8 s | 0.07 GB | 732 | 32.0% | 27/27 | 27 / 0 | 0 | 1 | 0 |
+| morpho-blue | 0.8.19 via-IR | 16.4 s | 0.16 GB | 2,415 | 35.5% | 28/28 | 11 / 17 | 0 | 6 | 0 |
+| universal-router | 0.8.17 via-IR | 292.8 s | 11.16 GB | 2,632 | 25.0% | 8/8 | 6 / 2 | 1 | 1,057 | 2 |
+| lido-steth-impl | 0.4.24 | 17.5 s | 0.27 GB | 1,950 | 25.2% | 69/69 | 61 / 8 | 0 | 7 | 0 |
+| entrypoint-v06 | 0.8.17 via-IR | 16.5 s | 0.27 GB | 3,165 | 30.8% | 20/20 | 8 / 12 | 1 | 54 | 2 |
+| yearn-v3-vault | Vyper 0.3.7 | 21.1 s | 0.46 GB | 4,344 | 51.6% | 90/90 | 42 / 48 | 2 | 3 | 0 |
+
+Totals: 8/8 analyzed, 272/272 selectors, names 185 correct / 87 unnamed / 0
+wrong, argument types 197 correct / 128 unresolved / 21 dynamic unresolved / 0
+wrong, payability 268 correct / 3 unresolved / 1 wrong, returns 206 correct /
+63 unresolved / 3 wrong; 15,793 code lines, raw share 35.3% (calibration sets
+1-3: 30.1%), 1,132 uncertain lines (1,057 of them Universal Router's), 4
+unstructured functions.
+
+The 4 wrong claims, as scored:
+
+- universal-router `0x709a1cc2`: printed payable, the ABI says nonpayable.
+- yearn-v3-vault `0xe46a5797`: return printed `bytes32`, the ABI says `uint256`.
+- entrypoint-v06 `0x5287ce12` and yearn-v3-vault `0x39ebf823`: a static struct
+  return printed as its words (five, resp. four values) against an ABI tuple.
+  The encodings are identical, but the scorer compares value counts, so these
+  count as wrong; recorded as scored, not rescored after the fact.
+
+Not yet compared with Dedaub: the exports for sets 3 and 4 are requested in
+`dedaub-exports/REQUESTED.md` (kept local, like the exports themselves).
+
