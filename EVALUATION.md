@@ -2147,3 +2147,20 @@ New fixture `VyperBigFramesFixture` (Vyper 0.2.12): frames of 46 and 58
 words, rewritten (the old limit skipped both); every function structured and
 executed against Py-EVM with overflowing seeds. 510 passed, 17 skipped.
 
+### 3pool's 72-word frame (rewrite limit 80)
+
+The three functions left were around 3pool's 72-word frame. With the rewrite
+limit at 80 words (144 inserted ops: two spans), and the native stack height
+still 70, 3pool re-analyzed natively is fully structured: unstructured 3 -> 0,
+uncertain lines 13 -> 7, payability 38/38 correct (was 35 + 3 unresolved),
+returns correct 34 -> 35, wrong claims 0. No other contract or fixture has a
+frame between 65 and 80 words, so nothing else changes
+(`results/runs1-2-frames-80.json`).
+
+Its code is now 3,312 lines with 2,108 raw (63.6%), up from 2,696 / 1,416:
+every internal call shows the caller's frame being saved (`v = MEM[c]`) and
+restored (`MEM[c] = v`). 245 of those stores restore exactly the value loaded
+from the same address; with their loads they are 37% of 3pool's raw lines
+(about 10% in stETH and tricrypto2). Held-out totals: raw lines 18,433 ->
+19,125 (30.6% -> 31.5%). 511 passed, 17 skipped.
+
