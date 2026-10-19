@@ -25,6 +25,9 @@ class Transfer:
     # A CALLPRIVATE's edges into a copy of the callee's entry inside this function
     # (left by the native analysis next to the call): the call already runs it.
     ignored_callee_copies: tuple[str, ...] = ()
+    # "multi" from a CALLPRIVATE with several recovered continuations: the
+    # variable holding its return address (a PHI of constant addresses).
+    dispatch: str | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +220,23 @@ def build_transfers(
             }
             if len(continuations[block_id]) == 1 and copies:
                 targets = targets - copies
+            if (
+                allow_multiple_jumps
+                and len(continuations[block_id]) > 1
+                and not copies
+                and targets <= members
+            ):
+                # Contexts merged by the native analysis: the return address is a
+                # PHI of constants, one per entering edge (shared-region split).
+                dispatch = _return_address_phi(program, block_id, continuations[block_id])
+                if dispatch is not None:
+                    transfers[block_id] = Transfer(
+                        "multi",
+                        tuple(sorted(continuations[block_id])),
+                        tail.id if tail else None,
+                        dispatch=dispatch,
+                    )
+                    continue
             if len(targets) > 1 or targets - members:
                 raise Unstructured(f"Ambiguous internal call continuation at {block_id}")
             transfers[block_id] = Transfer(
@@ -234,6 +254,60 @@ def build_transfers(
         else:
             raise Unstructured(f"Missing terminal instruction at {block_id}")
     return transfers
+
+
+def _addresses(block_id: str) -> set[int]:
+    """Addresses a (possibly cloned or inlined) block id may start with: each
+    leading `0x<hex>` that is followed by another id part (`0x...`, `B`, `V`,
+    `@`) or the end. '0x1d1b0x4bf' -> {0x1d1b, 0x1d1b0}: the id format does not
+    separate an address ending in 0 from a clone suffix, so callers require
+    exactly one candidate target to match."""
+    head = block_id.split("@", 1)[0]
+    found = set()
+    if not head.startswith("0x"):
+        return found
+    greedy = _block_address(head)  # the longest hex run, as matched before
+    if greedy is not None:
+        found.add(greedy)
+    digits = head[2:]
+    for end in range(1, len(digits) + 1):
+        if not all(c in "0123456789abcdef" for c in digits[:end]):
+            break
+        rest = digits[end:]
+        if not rest or rest.startswith(("0x", "B", "V")):
+            found.add(int(digits[:end], 16))
+    return found
+
+
+def _return_address_phi(program: Program, block_id: str, continuations: set[str]) -> str | None:
+    """The block's PHI whose input on each entering edge is a constant naming one
+    of the continuations, and which covers all of them; None unless exactly one."""
+    blocks = {block.id: block for block in program.blocks}
+    candidates = {c: _addresses(c) for c in continuations}
+    inputs: defaultdict[str, set[str]] = defaultdict(set)
+    for phi, _predecessor, value in program.phi_inputs:
+        inputs[phi].add(value)
+    found = []
+    for stmt in blocks[block_id].instructions:
+        if stmt.opcode != "PHI":
+            continue
+        values = inputs.get(stmt.id, set())
+        addresses = set()
+        for value in values:
+            constant = program.constants.get(value)
+            addresses.add(int(constant, 16) if constant is not None else None)
+        # Each constant names exactly one continuation, and each continuation one constant.
+        if None in addresses or not len(values) == len(addresses) == len(candidates):
+            continue
+        named = {
+            address: [c for c, options in candidates.items() if address in options]
+            for address in addresses
+        }
+        if all(len(cs) == 1 for cs in named.values()) and {cs[0] for cs in named.values()} == set(
+            candidates
+        ):
+            found.append(stmt.definitions[0] if stmt.definitions else stmt.id)
+    return found[0] if len(found) == 1 else None
 
 
 def phi_copies(
@@ -683,6 +757,8 @@ def split_shared_regions(
                 predecessors[target].add(source)
 
         def jump_phi(node: str) -> tuple[str, Instruction] | None:
+            if transfers[node].dispatch is not None:
+                return dispatch_phi(transfers[node].dispatch)
             jump = next(
                 (
                     s
@@ -736,7 +812,7 @@ def split_shared_regions(
                 matches = [
                     t
                     for t in transfers[exit_node].targets
-                    if _block_address(original(t)) == _address(next(iter(values)))
+                    if _address(next(iter(values))) in _addresses(original(t))
                 ]
                 if len(matches) != 1:
                     raise Unstructured(f"Return address of {caller} into {head} is not a successor")

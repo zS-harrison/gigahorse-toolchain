@@ -66,6 +66,57 @@ def test_shared_region_with_several_returns_is_copied_per_caller():
     }
 
 
+def test_call_with_two_continuations_is_split_by_its_return_address():
+    """Two paths reach one call block, each having pushed its own return address
+    (a PHI of constants there); the native analysis merged them, so the call has
+    two continuations (1inch's call to 0x3e31). Each caller gets its own copy of
+    the call block, continuing where its constant points. Block ids are clones
+    of function 0x5 ('0x1d1b0x5' is address 0x1d1b in it)."""
+    blocks = [
+        Block(
+            "0x00x5", [_stmt("0x1", "JUMPI", (), ("to_b", "c0"))], ["0xa0x5", "0xb0x5"], ["0xb0x5"]
+        ),
+        Block("0xa0x5", [_stmt("0xa1", "CONST", ("r1",)), _stmt("0xa2", "JUMP")], ["0x500x5"], []),
+        Block("0xb0x5", [_stmt("0xb1", "CONST", ("r2",)), _stmt("0xb2", "JUMP")], ["0x500x5"], []),
+        Block(
+            "0x500x5",
+            [
+                _stmt("0x51", "PHI", ("ret",), ("r1", "r2")),
+                _stmt("0x52", "CONST", ("callee",)),
+                _stmt("0x53", "CALLPRIVATE", ("out",), ("callee", "arg")),
+            ],
+            ["0x1d1b0x5", "0x1db00x5"],
+            [],
+        ),
+        Block("0x1d1b0x5", [_stmt("0x1d1c", "STOP")], [], []),
+        Block("0x1db00x5", [_stmt("0x1db1", "STOP")], [], []),
+        Block("0x90", [_stmt("0x91", "RETURNPRIVATE", (), ("out",))], [], []),
+    ]
+    caller = Function("0x5", ["0x00x5"], [], None, [], [b.id for b in blocks[:-1]])
+    callee = Function("0x90", ["0x90"], [], None, ["arg"], ["0x90"])
+    program = Program(
+        {"r1": "0x1d1b", "r2": "0x1db0", "callee": "0x90"},
+        {"to_b": "0xa0x5"},
+        [caller, callee],
+        blocks,
+        [],
+        [],
+        phi_inputs=[("0x51", "0xa0x5", "r1"), ("0x51", "0xb0x5", "r2")],
+    )
+    returns = [("0x500x5", "0x90", "0x1d1b0x5"), ("0x500x5", "0x90", "0x1db00x5")]
+    plan = structure_function(program, caller, call_returns=returns, split_shared_returns=True)
+    assert plan.region is not None, plan.warnings
+    continues = {
+        source: plan.transfers[plan.transfers[source].targets[0]].targets
+        for source in ("0xa0x5", "0xb0x5")
+    }
+    assert continues == {"0xa0x5": ("0x1d1b0x5",), "0xb0x5": ("0x1db00x5",)}
+    # Without the PHI naming one continuation per edge, the CFG stays explicit.
+    program.phi_inputs = [("0x51", "0xa0x5", "r1"), ("0x51", "0xb0x5", "r1")]
+    plan = structure_function(program, caller, call_returns=returns, split_shared_returns=True)
+    assert plan.region is None and "Ambiguous internal call continuation" in plan.warnings[0]
+
+
 def _call_program(extra):
     """A call whose block also has an edge into `extra` (1inch fn_0x14b2's shape)."""
     blocks = [

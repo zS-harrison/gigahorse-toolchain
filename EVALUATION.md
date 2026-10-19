@@ -2071,3 +2071,38 @@ The 4 wrong claims, as scored:
 Not yet compared with Dedaub: the exports for sets 3 and 4 are requested in
 `dedaub-exports/REQUESTED.md` (kept local, like the exports themselves).
 
+## Calls with two continuations, split by their return address (1inch)
+
+Phase 2 started with 1inch, where 4,886 of 6,617 code lines (74%) are in its 9
+unstructured functions; the three fillOrder variants are about 1,200 lines
+each. Their first blocker was the call to `0x3e31` with two continuations
+(`0x1d1b`, `0x1db0`). Simulating the caller block's bytecode backwards through
+its predecessors shows why: the return address sits right under the callee's
+arguments and is pushed on two different paths, `0x1d1b` on one and `0x1db0`
+on the other; the native analysis (1inch runs in its scalable configuration)
+merges the paths at the call block. In the TAC this is a PHI of the two
+constants, one per entering edge.
+
+`controlflow.build_transfers` now turns such a call into a "multi" transfer
+recording that PHI, and `split_shared_regions` (which already copies a shared
+region per caller when a JUMP's target is a PHI of constant return addresses)
+gives each caller its own copy of the call block, continuing at its own
+address. Only when one PHI of the block names each continuation by exactly one
+constant; otherwise the CFG stays explicit.
+
+Also fixed: block ids of clones (`0x1d1b0x4bf` = address 0x1d1b in function
+0x4bf) were parsed as the longest hex run (0x1d1b0). Return addresses now match
+a target when the address is one of the id's valid prefixes (or the old
+parse), and exactly one target must match, as before.
+
+Results: no visible change yet. All held-out contracts render identically
+(same lines, raw lines, scores, uncertain and unstructured counts). In 1inch
+the three fillOrder variants pass this point and stop at the next blocker: a
+JUMP from `0x24ba` to `0x1341`, an internal function epilogue (stack cleanup,
+then a jump to the return address) that solc shares between functions and the
+native analysis assigns to no function, recording no edge. The three
+`uniswapV3Swap*` functions stop at a return label passed through another call.
+Both need native-analysis changes. New synthetic test: two callers reaching one
+call block with different return-address constants (clone-form block ids).
+509 passed, 17 skipped.
+
