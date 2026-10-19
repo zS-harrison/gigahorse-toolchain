@@ -2164,3 +2164,29 @@ from the same address; with their loads they are 37% of 3pool's raw lines
 (about 10% in stETH and tricrypto2). Held-out totals: raw lines 18,433 ->
 19,125 (30.6% -> 31.5%). 511 passed, 17 skipped.
 
+## Frame saves, restores and word runs as one line
+
+Structuring 3pool exposed Vyper 0.2's frame handling: before each internal
+call the caller's words are loaded into locals, after it they are stored back
+(`reconstruction/highlevel/frames.py`, new statement `FrameWords`):
+
+- `restoreFrame(MEM[a..b])`: a run of at least 3 stores, each writing back the
+  local loaded from the same address (a single-assignment `v = MEM[a]`).
+- `saveFrame(MEM[a..b])`: a run of at least 3 such loads whose locals are used
+  only by grouped restores (no printed line names them individually).
+- Otherwise, runs of at least 3 whole-word loads or stores at consecutive
+  constant addresses print as tuples, every value shown:
+  `MEM[320..384] = (0xde0b..., v10, v11)`, `(v7, v8, v9) = MEM[416..480]`.
+  Stored values read no memory and call nothing; addresses are distinct.
+
+Every word is kept and executed in order by the interpreter; only printing
+groups them. Results (against 16abd53; `results/*-frame-words.json`): raw
+lines 19,125 -> 17,202 (31.5% -> 29.2%), code lines 60,789 -> 58,878; 3pool
+3,312 -> 2,249 lines (63.6% -> 46.4% raw), stETH 45.0% -> 38.4%, tricrypto2
+49.5% -> 41.9%, and Solidity runs too (Router02 10.3% -> 8.4%, Balancer
+30.2% -> 28.9%). Every score count, wrong claims (4), uncertain lines and
+unaccounted IR statements unchanged. Run-2 Dedaub comparison: 16,747 /
+12,671 code lines, raw share 26.4% / 25.7%. The grouped forms run against
+Py-EVM in the Vyper frames fixtures, Router02, Multicall3, the Uniswap V2 pair
+and the failure fixtures. 511 passed, 17 skipped.
+

@@ -22,6 +22,7 @@ from .ir import (
     ExprStmt,
     ExternalCallExpr,
     Field,
+    FrameWords,
     Halt,
     If,
     Index,
@@ -313,6 +314,20 @@ def _suffix(stmt: Stmt) -> str:
     return " // " + "; ".join(parts) if parts else ""
 
 
+def frame_ranges(words) -> str:
+    """MEM[320..416] for consecutive words (32 apart), comma-separated runs."""
+    addresses = sorted(address for address, _ in words)
+    runs: list[list[int]] = []
+    for address in addresses:
+        if runs and address == runs[-1][-1] + 32:
+            runs[-1].append(address)
+        else:
+            runs.append([address])
+    return ", ".join(
+        f"MEM[{run[0]}..{run[-1]}]" if len(run) > 1 else f"MEM[{run[0]}]" for run in runs
+    )
+
+
 def print_statement(out: Printed, stmt: Stmt, indent: int) -> None:
     evidence, rules = statement_evidence(stmt)
     common = {
@@ -322,6 +337,18 @@ def print_statement(out: Printed, stmt: Stmt, indent: int) -> None:
         "uncertain": stmt.uncertain,
     }
     suffix = _suffix(stmt)
+    if isinstance(stmt, FrameWords):
+        ordered = sorted(stmt.words, key=lambda word: word[0])
+        values = ", ".join(expression(value) for _, value in ordered)
+        if stmt.kind == "load":
+            text = f"({values}) = {frame_ranges(stmt.words)};"
+        elif stmt.kind == "store":
+            text = f"{frame_ranges(stmt.words)} = ({values});"
+        else:
+            name = "saveFrame" if stmt.kind == "save" else "restoreFrame"
+            text = f"{name}({frame_ranges(stmt.words)});"
+        out.emit(f"{text}{suffix}", indent, kind="frame", **common)
+        return
     if isinstance(stmt, Assign):
         lhs = ", ".join(expression(t) for t in stmt.targets)
         if len(stmt.targets) > 1:

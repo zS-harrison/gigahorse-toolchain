@@ -41,6 +41,7 @@ from .ir import (
     ExprStmt,
     ExternalCallExpr,
     Field,
+    FrameWords,
     Halt,
     If,
     Index,
@@ -375,6 +376,14 @@ class DecompiledMachine:
             # Executed anyway: a wrong printed meaning shows up as a divergence.
             self.uncertain_executed += 1
         if isinstance(stmt, Comment):
+            return
+        if isinstance(stmt, FrameWords):
+            for address, value in stmt.words:
+                if stmt.kind in {"save", "load"}:
+                    assert isinstance(value, Var)
+                    frame.values[value.name] = int.from_bytes(self.read(address, 32), "big")
+                else:
+                    self.write(address, self.eval(value, frame).to_bytes(32, "big"))
             return
         if isinstance(stmt, Assign):
             if isinstance(stmt.value, AbiCodec) and stmt.value.op == "decode":

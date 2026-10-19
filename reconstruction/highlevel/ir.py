@@ -542,6 +542,25 @@ class Comment(Stmt):
 
 
 @dataclass
+class FrameWords(Stmt):
+    """A run of whole-word frame saves or restores at constant addresses.
+
+    "save": each local gets the word at its address (`v = MEM[a]`); "restore":
+    each word gets back the local loaded from that same address earlier
+    (`MEM[a] = v`); "load" / "store": consecutive words read into locals /
+    written with values that read no memory (printed as a tuple). Executed word
+    by word, in order; printed as one line.
+    """
+
+    kind: str  # "save" | "restore" | "load" | "store"
+    # (address, local) for save/restore/load; (address, value) for store.
+    words: tuple[tuple[int, Expr], ...]
+
+    def expressions(self) -> tuple[Expr, ...]:
+        return tuple(value for _, value in self.words)
+
+
+@dataclass
 class RawBlock(Stmt):
     """Unstructured fallback: label plus raw statements, retained verbatim."""
 

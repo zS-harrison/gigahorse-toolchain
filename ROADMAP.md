@@ -206,6 +206,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | Statement-insertor spans sized to the insertion (ids of existing insertions unchanged) and frame rewrites up to 64 words: 3pool unstructured functions 8 -> 3, payability correct 30 -> 35, returns 31 -> 34, wrong claims 0; its raw lines rise 1,222 -> 1,416 because frame saves/restores are now visible; held-out raw share 30.1% -> 30.6%. Calls with two continuations split by return address (1eef118) | 3pool's 72-word frame; frame save/restore lines; 1inch's shared epilogue and passed-through return labels (native) |
 
+### Status update 2026-10-18: frame saves/restores and word runs as one line
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | `saveFrame` / `restoreFrame` for Vyper 0.2 frames and tuple loads/stores for runs of consecutive constant words, executed word by word: held-out raw lines 19,125 -> 17,202 (31.5% -> 29.2%), 3pool 63.6% -> 46.4%; scores unchanged | 1inch's unstructured functions (shared epilogue, passed-through return labels); emptied Vyper counter loops |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

@@ -356,6 +356,8 @@ def test_frames_over_36_words_are_rewritten(tmp_path, monkeypatch):
     assert all(len(loop.loads or loop.stores) <= loops_module.MAX_WORDS for loop in found)
     _, decompiled = compiler_fixture("vyper-big-frames-v0212", tmp_path / "big")
     assert "not structured" not in decompiled.text
+    # The saves and restores print as one line each (frames.py), executed below.
+    assert "saveFrame(MEM[" in decompiled.text and "restoreFrame(MEM[" in decompiled.text
 
     pytest.importorskip("eth_tester", reason="install the validation extra")
     from eth_abi import encode

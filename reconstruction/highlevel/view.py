@@ -12,6 +12,7 @@ from .abi_codec import recognize_abi_coders
 from .calldata_view import calldata_accessors, fold_pointer_reads
 from .dispatch import dispatch_value_checks, table_dispatcher, uses_table
 from .errors import recognize_error_payloads
+from .frames import group_frames
 from .idioms import (
     recognize_arithmetic_helpers,
     recognize_bytes_returns,
@@ -146,6 +147,11 @@ NARROW_RETURNS = [
     "  comment; the source may declare that type or a wider one holding the value (the bytecode is the same).",
 ]
 NARROW = re.compile(r"u?int(\d+)")
+# Added when Vyper frame saves/restores are grouped (frames.py).
+FRAME_WORDS = [
+    "saveFrame(MEM[a..b]) loads each word a, a+32, ..., b into its own local; restoreFrame(MEM[a..b]) writes",
+    "  each word back with the local loaded from that same address (Vyper 0.2 frames around internal calls).",
+]
 # Added when calldata words print through their argument (calldata_view.py).
 CALLDATA_ACCESSORS = [
     "Dynamic argument x (argument i): x.offset is its ABI head word msg.data[4 + 32*i] (x = x.offset + 4);",
@@ -504,6 +510,7 @@ def build_decompiled(
     )
     for view in views:
         fold_pointer_reads(view.body)
+    framed = sum(group_frames(view.body) for view in views)
     refine_160_bit_returns(views)
     storage = name_storage_from_getters(views)
     declarations, field_types = storage_declarations(views, context, storage)
@@ -522,6 +529,8 @@ def build_decompiled(
         legend += OBJECT_FLOW
     if accessors:
         legend += CALLDATA_ACCESSORS
+    if framed:
+        legend += FRAME_WORDS
     if uses_table(views):
         legend += SELECTOR_TABLE
     for line in legend:
