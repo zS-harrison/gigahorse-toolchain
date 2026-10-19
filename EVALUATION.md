@@ -1965,3 +1965,35 @@ calls (callee read summaries cannot show the saved words unread), arrays
 indexed by counters kept in memory, and call arguments staged at constant
 buffers that later code reads back.
 
+## Calldata words through their argument (and a dropped Vyper idea)
+
+Measured first, per the improvement loop:
+
+- Vyper 0.2 frame saves and restores: a constant-address store is dead if no
+  later code in the function (whole loops), no callee reachable from later
+  calls, and (for a private function) no caller or its callees may read the
+  word. Ceiling: 50 of 3pool's 1,222 raw lines (4.1%), 11 of tricrypto2's
+  1,540, 0 of stETH's, 4 of stableswap-ng's. Under the 5% threshold: not built.
+- Calldata: of 1,577 raw lines reading `msg.data`, 370 are in unstructured
+  functions (334 of them 1inch's); among the 1,207 in structured code, 414 are
+  elements of calldata arrays and about 290 ABI head-word checks.
+
+Built (`reconstruction/highlevel/calldata_view.py`, presentation only):
+
+- A dynamic argument x of position i is defined as `msg.data[4 + 32*i] + 4`,
+  so its head word `msg.data[4 + 32*i]` prints `x.offset` (= x - 4):
+  `require(varg2.offset <= 0x100000000)`, `require(varg5.offset <= uint64.max)`.
+- For an array argument whose element type is one static word (`address[]`,
+  `uint256[]`, ...), `msg.data[x.data + 32*k + 32*j]` prints `x[k + j]`
+  (an `Element` in calldata): `address(varg2[varg2.length - 1])`. Not for
+  `bytes[]` or tuple arrays, whose words are offsets or members. The legend
+  says no bounds check is implied.
+
+Results (all held-out contracts re-rendered against 92c13f4;
+`results/*-calldata-view.json`): raw lines 18,652 -> 18,400 (30.7% -> 30.3%),
+code lines unchanged; Router02 176 -> 142 raw, SwapRouter02 513 -> 485, 1inch
+1,164 -> 1,118, Permit2 280 -> 260. Every score count and wrong claims (4)
+unchanged. Run-2 Dedaub comparison: raw share 26.4% / 25.7%
+(`results/run2-dedaub-comparison-calldata-view.json`). Router02's execution
+test (swaps over calldata paths) checks the new forms. 508 passed, 17 skipped.
+

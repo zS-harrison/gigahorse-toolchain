@@ -502,6 +502,8 @@ class DecompiledMachine:
             self.write(self.eval(target.base, frame) + target.offset, value.to_bytes(32, "big"))
             return
         if isinstance(target, Element):
+            if target.space != "MEM":
+                raise UnsupportedExecution("Assignment to calldata")
             self.write(self.element(target, frame), value.to_bytes(32, "big"))
             return
         if isinstance(target, Index) and isinstance(target.base, Env):
@@ -1290,6 +1292,8 @@ class DecompiledMachine:
         if isinstance(expr, Field):
             return int.from_bytes(self.read(self.eval(expr.base, frame) + expr.offset, 32), "big")
         if isinstance(expr, Element):
+            if expr.space == "msg.data":
+                return self.calldata_word(self.element(expr, frame))
             return int.from_bytes(self.read(self.element(expr, frame), 32), "big")
         if isinstance(expr, Member):
             path = _member_path(expr)
@@ -1310,12 +1314,14 @@ class DecompiledMachine:
                     raise UnsupportedExecution("Code size requires an observed value")
                 return self.code_sizes[target]
             if (
-                expr.name in {"length", "data"}
+                expr.name in {"length", "data", "offset"}
                 and isinstance(expr.base, Var)
                 and expr.base.name in frame.values
             ):
                 # Calldata accessors of a dynamic argument (its value is 4 + ABI offset).
                 pointer = frame.values[expr.base.name]
+                if expr.name == "offset":
+                    return (pointer - 4) & MASK
                 return (
                     self.calldata_word(pointer) if expr.name == "length" else (pointer + 32) & MASK
                 )

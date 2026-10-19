@@ -182,6 +182,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Readable control and data flow | Interprocedural memory write summaries let forwarding pass private calls that cannot write a word (e.g. `_SafeMul`, Vyper helpers); Vyper calls' results read back from the output buffer print as the call's results (`(v1, v1_1) = target.value(x)`), and 0x40 is an ordinary word outside solc code. Held-out raw lines 18,847 -> 18,652, scores unchanged, wrong claims 4 | Curve raw share still 40-50%: Vyper 0.2 frame saves/restores around private calls, memory arrays indexed by memory loop counters, call staging at constant buffers. A contract-wide "slot as local" analysis frees at most 2-8% of Curve's raw lines even with assumed array bounds (measured), so it was not built |
 
+### Status update 2026-10-18: calldata words through their argument
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | `x.offset` for a dynamic argument's head word and `x[j]` for elements of a calldata array of one-word elements (`address(varg2[varg2.length - 1])`). Held-out raw lines 18,652 -> 18,400 (30.7% -> 30.3%), Router02 15.5% -> 12.5%; run-2 raw share 26.4% (Dedaub 25.7%); scores unchanged, wrong claims 4. Vyper frame-store hiding measured first and dropped (ceiling 4.1% of 3pool's raw lines, under 1% elsewhere) | 1inch's calldata lines are mostly in its 9 unstructured functions (2,180 raw lines in unstructured functions overall); Seaport's nested offset arithmetic |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

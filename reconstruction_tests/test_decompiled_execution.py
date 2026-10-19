@@ -424,6 +424,13 @@ def test_router02_pair_addresses_and_swaps_match_evm(tmp_path, monkeypatch, reco
     )
     assert "uint256[] memory varg" in text and "private returns (uint256[] memory)" in text
     assert re.search(r"require\(v\d+\[v\d+ - 1\] >= varg1, Error\(\"UniswapV2Router: INSUFF", text)
+    # Calldata `path` elements and head words through the argument (calldata_view.py).
+    assert (
+        "address(varg2[varg2.length - 1]) == address(0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2)"
+        in text
+    )
+    assert "fn_0x4d9f(address(varg2[1]), address(varg2[0]))" in text
+    assert "require(varg2.offset <= 0x100000000);" in text
     token_a, token_b, token_c, token_d = 0x1000, 0x2000, 0x3000, 0x4000
     pairs = {
         pair_for(token_a, token_b): words(10**21, 4 * 10**21, 1),

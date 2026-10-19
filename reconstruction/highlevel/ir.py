@@ -368,10 +368,13 @@ class Element(Expr):
     """Element `index` of a memory array object: the word at base + 32 + 32 * index.
 
     Printed `base[index]`; it reads and writes exactly that word (mod 2**256).
+    `space` "msg.data": element of a calldata array argument, msg.data[base.data
+    + 32 * index] (read only).
     """
 
     base: Expr
     index: Expr
+    space: str = "MEM"
 
     def children(self) -> tuple[Expr, ...]:
         return (self.base, self.index)

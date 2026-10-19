@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ..model import Function, Program
 from .abi_codec import recognize_abi_coders
+from .calldata_view import calldata_accessors
 from .dispatch import dispatch_value_checks, table_dispatcher, uses_table
 from .errors import recognize_error_payloads
 from .idioms import (
@@ -145,6 +146,11 @@ NARROW_RETURNS = [
     "  comment; the source may declare that type or a wider one holding the value (the bytecode is the same).",
 ]
 NARROW = re.compile(r"u?int(\d+)")
+# Added when calldata words print through their argument (calldata_view.py).
+CALLDATA_ACCESSORS = [
+    "Dynamic argument x (argument i): x.offset is its ABI head word msg.data[4 + 32*i] (x = x.offset + 4);",
+    "  for an array of one-word elements, x[j] is msg.data[x.data + 32*j] (no bounds check implied).",
+]
 # Added when a private function passes or returns memory objects (objects.object_flow).
 OBJECT_FLOW = [
     "Private functions: a parameter or return typed `bytes memory`, `uint256[] memory` or `struct(k) memory`",
@@ -491,6 +497,11 @@ def build_decompiled(
             FlowFunction(view.name, view.body, params, not view.function.selectors, objects)
         )
     private_objects(views, flow, closed=not failed)
+    accessors = sum(
+        calldata_accessors(view.arguments, view.body)
+        for view in views
+        if view.function.selectors and not view.arguments_unknown
+    )
     refine_160_bit_returns(views)
     storage = name_storage_from_getters(views)
     declarations, field_types = storage_declarations(views, context, storage)
@@ -507,6 +518,8 @@ def build_decompiled(
         v.returned_objects or any(a.type.endswith(" memory") for a in v.arguments) for v in views
     ):
         legend += OBJECT_FLOW
+    if accessors:
+        legend += CALLDATA_ACCESSORS
     if uses_table(views):
         legend += SELECTOR_TABLE
     for line in legend:
