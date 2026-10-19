@@ -2106,3 +2106,44 @@ Both need native-analysis changes. New synthetic test: two callers reaching one
 call block with different return-address constants (clone-form block ids).
 509 passed, 17 skipped.
 
+## Vyper frames over 36 words (3pool)
+
+3pool's 8 unstructured functions were all around Vyper 0.2 frame save/restore
+loops over 36 words, which the stack-loop rewrite skipped: the statement
+insertor placed insertion points 80 ops (0xa00 ids) apart, and a 63-word frame
+(126 inserted ops) collided with the next point. Now an insertion point with
+more than 80 ops takes as many 80-op spans as it needs
+(`logic/statement_insertor.dl`, `InsertionSize`); points of up to 80 ops keep
+exactly the ids they had, so every other contract's relations are unchanged
+(all 48 committed fixtures re-analyzed natively: same relations apart from an
+empty `TAC_PhiEntryInput` table and the recorded bundle path, both already
+different before; every fixture renders identically). The rewrite limit
+(`src/vyper_stack_loops.py`) goes from 36 to 64 words. Raising the native
+analysis' stack height (70) was tried and is not needed: 3pool's result is
+identical at 70 and 110.
+
+Re-analyzed natively, one at a time (300 s timeout, 16 GB cap): 3pool,
+stETH and tricrypto2 (the Vyper 0.2 contracts). stETH and tricrypto2 are
+unchanged. 3pool (`results/runs1-2-big-frames.json`):
+
+| | Before | After |
+| --- | --- | --- |
+| Unstructured functions | 8 | 3 |
+| Code lines | 3,055 | 2,696 |
+| Uncertain lines | 24 | 13 |
+| Payability correct / unresolved | 30 / 8 | 35 / 3 |
+| Returns correct / unresolved | 31 / 7 | 34 / 4 |
+| Wrong claims | 0 | 0 |
+| Raw lines | 1,222 (40.0%) | 1,416 (52.5%) |
+
+The raw lines go up: the newly structured functions now show Vyper's frame
+saves and restores (`MEM[c] = v` around each internal call) and the emptied
+counter loops, which were hidden in explicit blocks before. Held-out totals:
+raw lines 18,239 -> 18,433 (30.1% -> 30.6%), code lines 60,532 -> 60,173;
+no other contract changes. The 3 functions left are around 3pool's 72-word
+frame, still over the limit.
+
+New fixture `VyperBigFramesFixture` (Vyper 0.2.12): frames of 46 and 58
+words, rewritten (the old limit skipped both); every function structured and
+executed against Py-EVM with overflowing seeds. 510 passed, 17 skipped.
+

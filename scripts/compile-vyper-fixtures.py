@@ -26,6 +26,7 @@ VARIANTS = {
     "copy-v0310": ("VyperCopyFixture.vy", "0.3.10", "gas"),
     "external-v0212": ("VyperExternalFixture.vy", "0.2.12", None),
     "external-v0310": ("VyperExternalFixture.vy", "0.3.10", "gas"),
+    "big-frames-v0212": ("VyperBigFramesFixture.vy", "0.2.12", None),
 }
 
 

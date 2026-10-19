@@ -333,3 +333,42 @@ def test_arguments_copied_whole_are_parameters(tmp_path, monkeypatch):
     )
     harness.check(dirty, sender=owner)  # not an int128: rejected
     assert harness.reverts >= 3
+
+
+def test_frames_over_36_words_are_rewritten(tmp_path, monkeypatch):
+    """Frames of 46 and 58 words (VyperBigFramesFixture): the insertor gives an
+    insertion point as many 80-op spans as it needs, so these loops are rewritten
+    like smaller ones and every function is structured."""
+    import json
+    from pathlib import Path
+
+    import pytest
+
+    import src.vyper_stack_loops as loops_module
+    from reconstruction_tests.decompiled_support import compiler_fixture
+
+    root = Path(__file__).resolve().parents[1] / "fixtures/reconstruction"
+    manifest = json.loads((root / "vyper-big-frames-v0212.json").read_text())
+    code = bytes.fromhex((root / "vyper-big-frames-v0212.hex").read_text().strip())
+    found = stack_loops(code)
+    assert sorted(len(loop.loads) for loop in found if loop.loads) == [46, 58]
+    assert sorted(len(loop.stores) for loop in found if loop.stores) == [46, 58]
+    assert all(len(loop.loads or loop.stores) <= loops_module.MAX_WORDS for loop in found)
+    _, decompiled = compiler_fixture("vyper-big-frames-v0212", tmp_path / "big")
+    assert "not structured" not in decompiled.text
+
+    pytest.importorskip("eth_tester", reason="install the validation extra")
+    from eth_abi import encode
+
+    from reconstruction_tests.test_decompiled_execution import Harness
+    from reconstruction_tests.test_execution import EVMReference
+
+    reference = EVMReference(manifest)
+    owner = reference.tester.get_accounts()[0]
+    harness = Harness(decompiled, reference, {}, monkeypatch)
+    ids = manifest["method_identifiers"]
+    for seed in (0, 1, 7, 10**18, 2**250, 2**256 - 30):
+        for name in ("big(uint256)", "bigger(uint256)"):
+            harness.check(bytes.fromhex(ids[name]) + encode(["uint256"], [seed]), sender=owner)
+    harness.check(bytes.fromhex(ids["stored()"]), sender=owner)
+    assert 0 < harness.reverts < harness.cases

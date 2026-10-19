@@ -200,6 +200,12 @@ that gives Dedaub's Morpho output 192 (the table above left out closing braces).
 | --- | --- | --- |
 | Held-out accuracy | Set 4 (8 contracts frozen before analysis: solc 0.4.18-0.8.19, three via-IR, Vyper 0.3.7, a proxy): 8/8 analyzed, 272/272 selectors, 0 wrong names or argument types, 4 wrong claims (two of them flattened static struct returns the scorer counts as wrong), raw share 35.3%, 4 unstructured functions | Same-bytecode Dedaub comparison for sets 3 and 4 (exports requested); Universal Router's 1,057 uncertain lines; Yearn's 51.6% raw (Vyper) |
 
+### Status update 2026-10-18: Vyper frames over 36 words
+
+| Requirement | New evidence | Still open |
+| --- | --- | --- |
+| Readable control and data flow | Statement-insertor spans sized to the insertion (ids of existing insertions unchanged) and frame rewrites up to 64 words: 3pool unstructured functions 8 -> 3, payability correct 30 -> 35, returns 31 -> 34, wrong claims 0; its raw lines rise 1,222 -> 1,416 because frame saves/restores are now visible; held-out raw share 30.1% -> 30.6%. Calls with two continuations split by return address (1eef118) | 3pool's 72-word frame; frame save/restore lines; 1inch's shared epilogue and passed-through return labels (native) |
+
 Next priority: investigate the NFT receiver callback's unresolved PHI; add successful
 NFT mint/transfer/receiver and multisig behavior checks; improve dynamic encoders,
 interprocedural authority

@@ -93,10 +93,18 @@ INITIALIZE_STATEMENT_INSERTOR(_insertor, to)
     insertOp(stmt, _, _, order),
     insertOp(stmt, _, _, order + 1).
 
-  // Note: Insertions are placed 80 slots from each other, can make more precise
-  InsertedOpNewStatement(stmt, 0, as(@add_256(newPrevStmt, "0xa00"), Statement)):-
+  // Note: Insertions are placed 80 slots (0xa00) from each other; an insertion
+  // point with more than 80 ops takes as many 80-slot spans as it needs, so the
+  // next one does not collide with it (ids of smaller insertions are unchanged).
+  .decl InsertionSize(stmt: Statement, n: number)
+  InsertionSize(stmt, n) :-
+    insertOp(stmt, _, _, 0),
+    n = count : insertOp(stmt, _, _, _).
+
+  InsertedOpNewStatement(stmt, 0, as(@add_256(newPrevStmt, @number_to_hex(2560 * ((n + 79) / 80))), Statement)):-
     InsertedOpNewStatement(prevStmt, 0, newPrevStmt),
-    Insertion_Next(prevStmt, stmt).
+    Insertion_Next(prevStmt, stmt),
+    InsertionSize(prevStmt, n).
 
   Out_Statement_Opcode(stmt, op) :-
     Statement_Opcode(stmt, op),

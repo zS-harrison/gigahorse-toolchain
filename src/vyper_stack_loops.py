@@ -30,7 +30,7 @@ MASK = (1 << 256) - 1
 # insertion point 80 statement ids (logic/statement_insertor.dl), and the
 # words stay well within the analysis' 70 stack slots. Larger loops are left
 # as they are (the analysis then resolves no return after them).
-MAX_WORDS = 36
+MAX_WORDS = 64
 
 JUMPDEST, PUSH0, MLOAD, MSTORE, SUB, ADD, MUL = 0x5B, 0x5F, 0x51, 0x52, 0x03, 0x01, 0x02
 LT, GT, ISZERO, JUMPI, JUMP, POP = 0x10, 0x11, 0x15, 0x57, 0x56, 0x50
